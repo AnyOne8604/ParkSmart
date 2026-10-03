@@ -1,0 +1,8 @@
+.gradle/
+.gradle-cache/
+.kotlin/
+**/build/
+local.properties
+*.iml
+.idea/
+*.hprof
