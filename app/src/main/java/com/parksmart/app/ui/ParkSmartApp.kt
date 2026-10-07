@@ -1,18 +1,28 @@
 package com.parksmart.app.ui
 
+import android.Manifest
+import android.content.pm.PackageManager
+import android.graphics.Bitmap
+import android.graphics.BitmapFactory
+import android.net.Uri
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.PickVisualMediaRequest
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.core.content.ContextCompat
+import androidx.core.content.FileProvider
+
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
-import androidx.compose.foundation.layout.asPaddingValues
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -21,7 +31,6 @@ import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.statusBars
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
@@ -39,8 +48,6 @@ import androidx.compose.material.icons.automirrored.filled.ListAlt
 import androidx.compose.material.icons.filled.AccountCircle
 import androidx.compose.material.icons.filled.BarChart
 import androidx.compose.material.icons.filled.CameraAlt
-import androidx.compose.material.icons.filled.CheckCircle
-import androidx.compose.material.icons.filled.ChevronRight
 import androidx.compose.material.icons.filled.DirectionsCar
 import androidx.compose.material.icons.filled.Email
 import androidx.compose.material.icons.filled.Home
@@ -60,10 +67,8 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
-import androidx.compose.material3.Divider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
-import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.NavigationBar
 import androidx.compose.material3.NavigationBarItem
 import androidx.compose.material3.NavigationBarItemDefaults
@@ -73,11 +78,15 @@ import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -88,15 +97,10 @@ import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.res.painterResource
-import androidx.compose.ui.text.SpanStyle
-import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.VisualTransformation
-import androidx.compose.ui.text.withStyle
-import androidx.compose.ui.unit.Dp
-import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.ViewModel
@@ -105,7 +109,7 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import com.parksmart.app.R
 import com.parksmart.app.data.CriticalZone
 import com.parksmart.app.data.DashboardData
-import com.parksmart.app.data.DemoParkSmartRepository
+import com.parksmart.app.data.ParkSmartApiRepository
 import com.parksmart.app.data.ReportStatus
 import com.parksmart.app.data.ReportSummary
 import com.parksmart.app.data.ZonePriority
@@ -118,6 +122,11 @@ import com.parksmart.app.ui.theme.ParkGreen
 import com.parksmart.app.ui.theme.ParkGreenDark
 import com.parksmart.app.ui.theme.ParkGreenLight
 import com.parksmart.app.ui.theme.Warning
+import com.google.android.gms.location.LocationServices
+import com.google.android.gms.location.Priority
+import com.google.android.gms.tasks.CancellationTokenSource
+import java.io.File
+import java.io.FileOutputStream
 
 private enum class AppRoute {
     LOGIN, HOME, REPORT, MAP, PROFILE, REPORTS, STATISTICS
@@ -131,7 +140,8 @@ private data class MainTab(
 
 @Composable
 fun ParkSmartApp() {
-    val repository = remember { DemoParkSmartRepository() }
+    val context = LocalContext.current
+    val repository = remember { ParkSmartApiRepository(context.applicationContext) }
     val factory = remember(repository) {
         object : ViewModelProvider.Factory {
             @Suppress("UNCHECKED_CAST")
@@ -140,15 +150,21 @@ fun ParkSmartApp() {
         }
     }
     val model: ParkSmartViewModel = viewModel(factory = factory)
+    val state by model.state.collectAsState()
     var routeName by rememberSaveable { mutableStateOf(AppRoute.LOGIN.name) }
     val route = AppRoute.valueOf(routeName)
-    val dashboard = model.dashboard
+    val dashboard = state.dashboard ?: DashboardData(state.user ?: com.parksmart.app.data.ParkSmartUser("Ciudadano", "Ciudadano", "PS"), emptyList(), emptyList(), 0)
+    LaunchedEffect(state.user) {
+        if (state.user != null) routeName = AppRoute.HOME.name
+    }
 
     if (route == AppRoute.LOGIN) {
-        LoginScreen(onLogin = { email, password ->
-            model.signIn(email, password)
-            routeName = AppRoute.HOME.name
-        })
+        LoginScreen(
+            onLogin = model::signIn,
+            onRegister = model::register,
+            busy = state.busy,
+            message = state.message,
+        )
         return
     }
 
@@ -193,9 +209,9 @@ fun ParkSmartApp() {
     ) { insets ->
         when (route) {
             AppRoute.HOME -> HomeScreen(dashboard, insets, onNavigate = { routeName = it.name })
-            AppRoute.REPORT -> ReportScreen(insets)
+            AppRoute.REPORT -> ReportScreen(insets, state.busy, state.message, model::createReport)
             AppRoute.MAP -> MapScreen(dashboard, insets)
-            AppRoute.PROFILE -> ProfileScreen(dashboard, insets, onSignOut = { routeName = AppRoute.LOGIN.name })
+            AppRoute.PROFILE -> ProfileScreen(dashboard, insets, onSignOut = { model.signOut(); routeName = AppRoute.LOGIN.name })
             AppRoute.REPORTS -> ReportsScreen(dashboard, insets, onBack = { routeName = AppRoute.HOME.name })
             AppRoute.STATISTICS -> StatisticsScreen(dashboard, insets, onBack = { routeName = AppRoute.HOME.name })
             AppRoute.LOGIN -> Unit
@@ -204,7 +220,14 @@ fun ParkSmartApp() {
 }
 
 @Composable
-private fun LoginScreen(onLogin: (String, String) -> Unit) {
+private fun LoginScreen(
+    onLogin: (String, String) -> Unit,
+    onRegister: (String, String, String) -> Unit,
+    busy: Boolean,
+    message: String?,
+) {
+    var registering by rememberSaveable { mutableStateOf(false) }
+    var name by rememberSaveable { mutableStateOf("") }
     var email by rememberSaveable { mutableStateOf("") }
     var password by rememberSaveable { mutableStateOf("") }
     var passwordVisible by rememberSaveable { mutableStateOf(false) }
@@ -234,6 +257,19 @@ private fun LoginScreen(onLogin: (String, String) -> Unit) {
             lineHeight = 20.sp,
         )
         Spacer(Modifier.height(24.dp))
+        if (registering) {
+            OutlinedTextField(
+                value = name,
+                onValueChange = { name = it },
+                modifier = Modifier.fillMaxWidth(),
+                singleLine = true,
+                label = { Text("Nombre completo") },
+                leadingIcon = { Icon(Icons.Filled.Person, contentDescription = null, tint = ParkGreen) },
+                shape = RoundedCornerShape(12.dp),
+                colors = LoginFieldColors(),
+            )
+            Spacer(Modifier.height(12.dp))
+        }
         OutlinedTextField(
             value = email,
             onValueChange = { email = it },
@@ -269,40 +305,22 @@ private fun LoginScreen(onLogin: (String, String) -> Unit) {
         )
         Spacer(Modifier.height(18.dp))
         Button(
-            onClick = { onLogin(email, password) },
+            onClick = { if (registering) onRegister(name, email, password) else onLogin(email, password) },
+            enabled = !busy,
             modifier = Modifier.fillMaxWidth().height(52.dp),
             shape = RoundedCornerShape(12.dp),
             colors = ButtonDefaults.buttonColors(containerColor = ParkGreen),
         ) {
-            Text("Iniciar sesión", fontSize = 15.sp, fontWeight = FontWeight.SemiBold)
+            Text(if (busy) "Conectando…" else if (registering) "Crear cuenta" else "Iniciar sesión", fontSize = 15.sp, fontWeight = FontWeight.SemiBold)
         }
-        Spacer(Modifier.height(16.dp))
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Divider(Modifier.weight(1f), color = Line)
-            Text("  o  ", color = MutedInk, fontSize = 12.sp)
-            Divider(Modifier.weight(1f), color = Line)
-        }
-        Spacer(Modifier.height(14.dp))
-        OutlinedButton(
-            onClick = {},
-            modifier = Modifier.fillMaxWidth().height(50.dp),
-            shape = RoundedCornerShape(12.dp),
-            border = BorderStroke(1.dp, Line),
-            contentPadding = PaddingValues(horizontal = 16.dp),
-        ) {
-            GoogleMark()
-            Spacer(Modifier.width(10.dp))
-            Text("Continuar con Google", color = Ink, fontSize = 14.sp, fontWeight = FontWeight.Medium)
+        if (message != null) {
+            Spacer(Modifier.height(12.dp))
+            Text(message, color = Danger, fontSize = 12.sp, lineHeight = 17.sp)
         }
         Spacer(Modifier.height(18.dp))
         Row(horizontalArrangement = Arrangement.Center, verticalAlignment = Alignment.CenterVertically) {
-            Text("¿No tienes una cuenta?", color = MutedInk, fontSize = 13.sp)
-            Text(
-                "  Regístrate",
-                color = ParkGreen,
-                fontSize = 13.sp,
-                fontWeight = FontWeight.SemiBold,
-            )
+            Text(if (registering) "¿Ya tienes cuenta?" else "¿No tienes una cuenta?", color = MutedInk, fontSize = 13.sp)
+            Text(if (registering) "  Inicia sesión" else "  Regístrate", modifier = Modifier.clickable { registering = !registering }, color = ParkGreen, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
         }
     }
 }
@@ -314,17 +332,6 @@ private fun LoginFieldColors() = OutlinedTextFieldDefaults.colors(
     focusedLabelColor = ParkGreen,
     cursorColor = ParkGreen,
 )
-
-@Composable
-private fun GoogleMark() {
-    Text(
-        buildAnnotatedString {
-            withStyle(SpanStyle(color = Color(0xFF4285F4))) { append("G") }
-        },
-        fontSize = 19.sp,
-        fontWeight = FontWeight.Bold,
-    )
-}
 
 @Composable
 private fun HomeScreen(data: DashboardData, insets: PaddingValues, onNavigate: (AppRoute) -> Unit) {
@@ -385,14 +392,18 @@ private fun HomeScreen(data: DashboardData, insets: PaddingValues, onNavigate: (
             Text("Ver todas", color = ParkGreen, fontSize = 12.sp, fontWeight = FontWeight.SemiBold, modifier = Modifier.clickable { onNavigate(AppRoute.STATISTICS) })
         }
         Spacer(Modifier.height(10.dp))
-        data.zones.forEachIndexed { index, zone ->
+        if (data.zones.isEmpty()) {
+            Text("Aún no hay datos suficientes para identificar zonas críticas.", modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp)).background(Color.White).padding(14.dp), color = MutedInk, fontSize = 12.sp)
+        } else data.zones.forEachIndexed { index, zone ->
             ZoneRow(zone)
             if (index != data.zones.lastIndex) Spacer(Modifier.height(8.dp))
         }
         Spacer(Modifier.height(20.dp))
         Text("Actividad reciente", color = Ink, fontSize = 17.sp, fontWeight = FontWeight.Bold)
         Spacer(Modifier.height(10.dp))
-        ReportRow(data.reports.first(), compact = true)
+        if (data.reports.isEmpty()) {
+            Text("Todavía no has enviado reportes.", modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp)).background(Color.White).padding(14.dp), color = MutedInk, fontSize = 12.sp)
+        } else ReportRow(data.reports.first(), compact = true)
         Spacer(Modifier.height(22.dp))
     }
 }
@@ -441,50 +452,136 @@ private fun ZoneRow(zone: CriticalZone) {
 }
 
 @Composable
-private fun ReportScreen(insets: PaddingValues) {
-    Column(
-        modifier = Modifier.fillMaxSize().padding(insets).verticalScroll(rememberScrollState()).padding(horizontal = 20.dp),
-    ) {
+private fun ReportScreen(
+    insets: PaddingValues,
+    busy: Boolean,
+    message: String?,
+    onSubmit: (String, String, Double?, Double?, File?) -> Unit,
+) {
+    val context = LocalContext.current
+    var selectedPhoto by remember { mutableStateOf<File?>(null) }
+    var preview by remember { mutableStateOf<Bitmap?>(null) }
+    var latitude by remember { mutableStateOf<Double?>(null) }
+    var longitude by remember { mutableStateOf<Double?>(null) }
+    var category by rememberSaveable { mutableStateOf("Automóvil") }
+    var description by rememberSaveable { mutableStateOf("") }
+    var captureFile by remember { mutableStateOf<File?>(null) }
+
+    fun decodePreview(uri: Uri): Bitmap? {
+        val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+        context.contentResolver.openInputStream(uri)?.use { BitmapFactory.decodeStream(it, null, bounds) }
+        var sampleSize = 1
+        while (maxOf(bounds.outWidth, bounds.outHeight) / sampleSize > 1600) sampleSize *= 2
+        val options = BitmapFactory.Options().apply { inSampleSize = sampleSize }
+        return context.contentResolver.openInputStream(uri)?.use { BitmapFactory.decodeStream(it, null, options) }
+    }
+
+    fun saveJpeg(uri: Uri) {
+        runCatching {
+            val bitmap = decodePreview(uri) ?: error("No se pudo abrir la imagen")
+            val file = File(context.cacheDir, "parksmart-${System.currentTimeMillis()}.jpg")
+            FileOutputStream(file).use { bitmap.compress(Bitmap.CompressFormat.JPEG, 88, it) }
+            preview = bitmap
+            selectedPhoto = file
+        }
+    }
+
+    fun requestCurrentLocation() {
+        try {
+            LocationServices.getFusedLocationProviderClient(context)
+                .getCurrentLocation(Priority.PRIORITY_HIGH_ACCURACY, CancellationTokenSource().token)
+                .addOnSuccessListener { location ->
+                if (location != null) { latitude = location.latitude; longitude = location.longitude }
+            }
+        } catch (_: SecurityException) { }
+    }
+
+    val takePicture = rememberLauncherForActivityResult(ActivityResultContracts.TakePicture()) { saved ->
+        if (saved) captureFile?.let { file ->
+            selectedPhoto = file
+            preview = decodePreview(Uri.fromFile(file))
+        }
+    }
+    val cameraPermission = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
+        if (granted) {
+            val file = File(context.cacheDir, "parksmart-${System.currentTimeMillis()}.jpg")
+            captureFile = file
+            takePicture.launch(FileProvider.getUriForFile(context, "${context.packageName}.fileprovider", file))
+        }
+    }
+    val gallery = rememberLauncherForActivityResult(ActivityResultContracts.PickVisualMedia()) { uri -> uri?.let(::saveJpeg) }
+    val locationPermission = rememberLauncherForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { permissions ->
+        if (permissions.values.any { it }) requestCurrentLocation()
+    }
+
+    Column(modifier = Modifier.fillMaxSize().padding(insets).verticalScroll(rememberScrollState()).padding(horizontal = 20.dp)) {
         ScreenHeading("Nuevo reporte", "Captura de evidencia y ubicación")
-        DemoBanner()
         Spacer(Modifier.height(18.dp))
         Box(
-            modifier = Modifier.fillMaxWidth().height(190.dp).clip(RoundedCornerShape(16.dp)).background(Color(0xFFE5EEE9)),
+            modifier = Modifier.fillMaxWidth().height(190.dp).clip(RoundedCornerShape(16.dp)).background(Color(0xFFE5EEE9)).clickable {
+                gallery.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly))
+            },
             contentAlignment = Alignment.Center,
         ) {
-            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+            val image = preview
+            if (image != null) Image(image.asImageBitmap(), contentDescription = "Foto seleccionada", modifier = Modifier.fillMaxSize())
+            else Column(horizontalAlignment = Alignment.CenterHorizontally) {
                 Box(Modifier.size(54.dp).clip(CircleShape).background(Color.White), contentAlignment = Alignment.Center) {
                     Icon(Icons.Filled.PhotoCamera, contentDescription = null, tint = ParkGreen, modifier = Modifier.size(26.dp))
                 }
                 Spacer(Modifier.height(10.dp))
                 Text("Evidencia fotográfica", color = Ink, fontWeight = FontWeight.SemiBold)
-                Text("La cámara se habilitará en una versión futura", color = MutedInk, fontSize = 12.sp)
+                Text("Elige galería o toma una foto", color = MutedInk, fontSize = 12.sp)
             }
+        }
+        Spacer(Modifier.height(9.dp))
+        Row(horizontalArrangement = Arrangement.spacedBy(10.dp), modifier = Modifier.fillMaxWidth()) {
+            OutlinedButton(onClick = {
+                if (ContextCompat.checkSelfPermission(context, Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED) {
+                    val file = File(context.cacheDir, "parksmart-${System.currentTimeMillis()}.jpg")
+                    captureFile = file
+                    takePicture.launch(FileProvider.getUriForFile(context, "${context.packageName}.fileprovider", file))
+                } else cameraPermission.launch(Manifest.permission.CAMERA)
+            }, modifier = Modifier.weight(1f)) { Text("Tomar foto") }
+            OutlinedButton(onClick = { gallery.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)) }, modifier = Modifier.weight(1f)) { Text("Elegir de galería") }
         }
         Spacer(Modifier.height(16.dp))
         SectionLabel("Ubicación del reporte")
-        InfoRow(Icons.Filled.MyLocation, "Ubicación GPS", "Se solicitará permiso al implementar el servicio")
+        OutlinedButton(onClick = {
+            val fine = ContextCompat.checkSelfPermission(context, Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED
+            val coarse = ContextCompat.checkSelfPermission(context, Manifest.permission.ACCESS_COARSE_LOCATION) == PackageManager.PERMISSION_GRANTED
+            if (fine || coarse) requestCurrentLocation()
+            else locationPermission.launch(arrayOf(Manifest.permission.ACCESS_FINE_LOCATION, Manifest.permission.ACCESS_COARSE_LOCATION))
+        }, modifier = Modifier.fillMaxWidth()) {
+            Icon(Icons.Filled.MyLocation, contentDescription = null)
+            Spacer(Modifier.width(8.dp))
+            Text(if (latitude == null) "Obtener ubicación actual" else "Ubicación capturada")
+        }
+        latitude?.let { lat -> longitude?.let { lon -> Text("%.5f, %.5f".format(lat, lon), modifier = Modifier.padding(top = 6.dp), color = MutedInk, fontSize = 11.sp) } }
         Spacer(Modifier.height(16.dp))
         SectionLabel("Tipo de vehículo")
         Row(horizontalArrangement = Arrangement.spacedBy(9.dp)) {
-            VehicleChoice("Automóvil", Icons.Filled.DirectionsCar, Modifier.weight(1f), selected = true)
-            VehicleChoice("Motocicleta", Icons.Filled.DirectionsCar, Modifier.weight(1f), selected = false)
-            VehicleChoice("Otro", Icons.Filled.ReportProblem, Modifier.weight(1f), selected = false)
+            listOf("Automóvil", "Motocicleta", "Otro").forEach { type ->
+                VehicleChoice(type, if (type == "Otro") Icons.Filled.ReportProblem else Icons.Filled.DirectionsCar, Modifier.weight(1f), selected = category == type) { category = type }
+            }
         }
+        Spacer(Modifier.height(15.dp))
+        OutlinedTextField(value = description, onValueChange = { description = it }, modifier = Modifier.fillMaxWidth(), label = { Text("Descripción (opcional)") }, minLines = 2, maxLines = 4, shape = RoundedCornerShape(12.dp))
+        if (message != null) Text(message, modifier = Modifier.padding(top = 10.dp), color = if (message.contains("correctamente")) ParkGreen else Danger, fontSize = 12.sp)
         Spacer(Modifier.height(20.dp))
-        Button(onClick = {}, enabled = false, modifier = Modifier.fillMaxWidth().height(50.dp), shape = RoundedCornerShape(12.dp)) {
-            Text("Enviar reporte")
+        Button(onClick = { onSubmit(category, description, latitude, longitude, selectedPhoto) }, enabled = !busy, modifier = Modifier.fillMaxWidth().height(50.dp), shape = RoundedCornerShape(12.dp), colors = ButtonDefaults.buttonColors(containerColor = ParkGreen)) {
+            Text(if (busy) "Enviando…" else "Enviar reporte")
         }
         Spacer(Modifier.height(20.dp))
     }
 }
 
 @Composable
-private fun VehicleChoice(label: String, icon: ImageVector, modifier: Modifier, selected: Boolean) {
+private fun VehicleChoice(label: String, icon: ImageVector, modifier: Modifier, selected: Boolean, onClick: () -> Unit) {
     Column(
         modifier = modifier.height(78.dp).clip(RoundedCornerShape(12.dp))
             .background(if (selected) ParkGreenLight else Color.White)
-            .then(if (selected) Modifier else Modifier),
+            .clickable(onClick = onClick),
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.Center,
     ) {
@@ -498,6 +595,7 @@ private fun VehicleChoice(label: String, icon: ImageVector, modifier: Modifier, 
 private fun MapScreen(data: DashboardData, insets: PaddingValues) {
     Column(modifier = Modifier.fillMaxSize().padding(insets).padding(horizontal = 18.dp)) {
         ScreenHeading("Mapa de reportes", "Bogotá, Colombia")
+        Text("Vista esquemática. Los datos del mapa aún no están conectados.", modifier = Modifier.padding(bottom = 10.dp), color = MutedInk, fontSize = 11.sp)
         Row(
             modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp)).background(Color.White).padding(horizontal = 13.dp, vertical = 12.dp),
             verticalAlignment = Alignment.CenterVertically,
@@ -532,7 +630,7 @@ private fun MapScreen(data: DashboardData, insets: PaddingValues) {
             LegendDot(Danger, "Alta")
             LegendDot(Warning, "Media")
             LegendDot(ParkGreen, "Baja")
-            Text("${data.totalReportsToday} hoy", color = Ink, fontSize = 11.sp, fontWeight = FontWeight.SemiBold)
+            Text("${data.totalReports} reportes", color = Ink, fontSize = 11.sp, fontWeight = FontWeight.SemiBold)
         }
         Spacer(Modifier.height(12.dp))
     }
@@ -610,11 +708,10 @@ private fun ProfileScreen(data: DashboardData, insets: PaddingValues, onSignOut:
             Column {
                 Text(data.user.fullName, color = Ink, fontSize = 16.sp, fontWeight = FontWeight.Bold)
                 Text(data.user.role, color = MutedInk, fontSize = 12.sp)
-                Text("Cuenta de demostración", color = ParkGreen, fontSize = 11.sp, fontWeight = FontWeight.Medium)
+                Text("Cuenta ParkSmart", color = ParkGreen, fontSize = 11.sp, fontWeight = FontWeight.Medium)
             }
         }
         Spacer(Modifier.height(18.dp))
-        DemoBanner()
         Spacer(Modifier.height(16.dp))
         ProfileItem(Icons.Filled.AccountCircle, "Información personal")
         ProfileItem(Icons.Filled.NotificationsNone, "Notificaciones")
@@ -652,8 +749,8 @@ private fun ProfileItem(icon: ImageVector, label: String) {
 private fun ReportsScreen(data: DashboardData, insets: PaddingValues, onBack: () -> Unit) {
     Column(modifier = Modifier.fillMaxSize().padding(insets).verticalScroll(rememberScrollState()).padding(horizontal = 20.dp)) {
         BackHeading("Mis reportes", onBack)
-        DemoBanner()
         Spacer(Modifier.height(14.dp))
+        if (data.reports.isEmpty()) Text("Aún no tienes reportes.", modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp)).background(Color.White).padding(14.dp), color = MutedInk, fontSize = 12.sp)
         data.reports.forEachIndexed { index, report ->
             ReportRow(report)
             if (index != data.reports.lastIndex) Spacer(Modifier.height(9.dp))
@@ -698,15 +795,15 @@ private fun ReportRow(report: ReportSummary, compact: Boolean = false) {
 private fun StatisticsScreen(data: DashboardData, insets: PaddingValues, onBack: () -> Unit) {
     Column(modifier = Modifier.fillMaxSize().padding(insets).verticalScroll(rememberScrollState()).padding(horizontal = 20.dp)) {
         BackHeading("Estadísticas", onBack)
-        DemoBanner()
         Spacer(Modifier.height(16.dp))
         Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-            MetricTile("Reportes hoy", data.totalReportsToday.toString(), Icons.AutoMirrored.Filled.ListAlt, Modifier.weight(1f))
+            MetricTile("Reportes totales", data.totalReports.toString(), Icons.AutoMirrored.Filled.ListAlt, Modifier.weight(1f))
             MetricTile("Zonas críticas", data.zones.size.toString(), Icons.Filled.LocationOn, Modifier.weight(1f))
         }
         Spacer(Modifier.height(20.dp))
         Text("Reportes por zona", color = Ink, fontSize = 16.sp, fontWeight = FontWeight.Bold)
         Spacer(Modifier.height(12.dp))
+        if (data.zones.isEmpty()) Text("Aún no hay datos para mostrar por zona.", color = MutedInk, fontSize = 12.sp)
         data.zones.forEach { zone ->
             val fraction = zone.reportCount.toFloat() / (data.zones.maxOfOrNull { it.reportCount } ?: 1)
             Column(Modifier.fillMaxWidth().clip(RoundedCornerShape(13.dp)).background(Color.White).padding(14.dp)) {
@@ -755,18 +852,6 @@ private fun BackHeading(title: String, onBack: () -> Unit) {
         }
         Spacer(Modifier.width(5.dp))
         Text(title, color = Ink, fontSize = 20.sp, fontWeight = FontWeight.Bold)
-    }
-}
-
-@Composable
-private fun DemoBanner() {
-    Row(
-        modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(11.dp)).background(Color(0xFFFFF5DF)).padding(horizontal = 12.dp, vertical = 10.dp),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        Icon(Icons.Filled.CheckCircle, contentDescription = null, tint = Color(0xFFB8750B), modifier = Modifier.size(17.dp))
-        Spacer(Modifier.width(8.dp))
-        Text("Vista de demostración con información de ejemplo", color = Color(0xFF80520E), fontSize = 11.sp, lineHeight = 15.sp)
     }
 }
 

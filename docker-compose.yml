@@ -1,0 +1,35 @@
+services:
+  db:
+    image: postgis/postgis:17-3.5
+    environment:
+      POSTGRES_DB: parksmart
+      POSTGRES_USER: parksmart
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-parksmart-local}
+    ports:
+      - "5432:5432"
+    volumes:
+      - parksmart_db:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U parksmart -d parksmart"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  api:
+    build: ./backend
+    environment:
+      DATABASE_URL: postgresql+psycopg://parksmart:${POSTGRES_PASSWORD:-parksmart-local}@db:5432/parksmart
+      JWT_SECRET: ${JWT_SECRET:-replace-this-secret-before-sharing}
+      UPLOAD_DIR: /data/uploads
+      CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:8000}
+    ports:
+      - "8000:8000"
+    volumes:
+      - parksmart_uploads:/data/uploads
+    depends_on:
+      db:
+        condition: service_healthy
+
+volumes:
+  parksmart_db:
+  parksmart_uploads:
