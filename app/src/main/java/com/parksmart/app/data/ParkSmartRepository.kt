@@ -37,3 +37,31 @@ data class DashboardData(
     val reports: List<ReportSummary>,
     val totalReports: Int,
 )
+
+data class MapReport(
+    val id: String,
+    val category: String,
+    val latitude: Double,
+    val longitude: Double,
+    val locality: String,
+    val address: String,
+    val status: String,
+    val createdAt: String,
+)
+
+data class MapZone(
+    val id: String,
+    val latitude: Double,
+    val longitude: Double,
+    val reports: Int,
+    val automobiles: Int,
+    val motorcycles: Int,
+    val other: Int,
+    val open: Int,
+)
+
+data class MapData(
+    val reports: List<MapReport> = emptyList(),
+    val zones: List<MapZone> = emptyList(),
+    val totalReports: Int = 0,
+)

@@ -1,17 +1,18 @@
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from uuid import uuid4
 
-from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile, status
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile, status
 from fastapi.responses import FileResponse
-from geoalchemy2 import WKTElement
+from geoalchemy2 import Geography, WKTElement
 from geoalchemy2.shape import to_shape
-from sqlalchemy import func, select
+from sqlalchemy import cast, func, select, text
 from sqlalchemy.orm import Session
 
 from app.config import settings
 from app.database import get_db
 from app.models import Report, User
-from app.schemas import AuthOut, DashboardOut, ReportOut, UserCreate, UserLogin, UserOut
+from app.schemas import AuthOut, DashboardOut, NearbyReportOut, ReportOut, UserCreate, UserLogin, UserOut, ZoneStatisticsOut
 from app.security import create_access_token, current_user, hash_password, verify_password
 
 router = APIRouter(prefix="/api/v1")
@@ -127,6 +128,115 @@ async def create_report(
 def list_reports(user: User = Depends(current_user), db: Session = Depends(get_db)) -> list[ReportOut]:
     reports = db.scalars(select(Report).where(Report.user_id == user.id).order_by(Report.created_at.desc())).all()
     return [report_out(report) for report in reports]
+
+
+def validate_map_filters(category: str | None, status_filter: str | None) -> None:
+    if category is not None and category not in ALLOWED_CATEGORIES:
+        raise HTTPException(status_code=422, detail="Categoría de reporte no válida")
+    if status_filter is not None and status_filter not in {"received", "in_review", "closed"}:
+        raise HTTPException(status_code=422, detail="Estado de reporte no válido")
+
+
+@router.get("/reports/nearby", response_model=list[NearbyReportOut])
+def nearby_reports(
+    latitude: float = Query(4.7110, ge=-90, le=90),
+    longitude: float = Query(-74.0721, ge=-180, le=180),
+    radius_m: int = Query(25000, ge=500, le=25000),
+    category: str | None = Query(default=None, max_length=40),
+    status_filter: str | None = Query(default=None, alias="status", max_length=30),
+    since_days: int | None = Query(default=None, ge=1, le=365),
+    user: User = Depends(current_user),
+    db: Session = Depends(get_db),
+) -> list[NearbyReportOut]:
+    validate_map_filters(category, status_filter)
+    center = cast(func.ST_SetSRID(func.ST_MakePoint(longitude, latitude), 4326), Geography(geometry_type="POINT", srid=4326))
+    query = select(Report).where(
+        Report.location.is_not(None),
+        func.ST_DWithin(Report.location, center, radius_m),
+    )
+    if category:
+        query = query.where(Report.category == category)
+    if status_filter:
+        query = query.where(Report.status == status_filter)
+    if since_days:
+        query = query.where(Report.created_at >= datetime.now(timezone.utc) - timedelta(days=since_days))
+
+    reports = db.scalars(query.order_by(func.ST_Distance(Report.location, center)).limit(500)).all()
+    result = []
+    for report in reports:
+        point = to_shape(report.location)
+        result.append(
+            NearbyReportOut(
+                id=report.id,
+                category=report.category,
+                latitude=point.y,
+                longitude=point.x,
+                locality=report.locality,
+                address=report.address,
+                status=report.status,
+                created_at=report.created_at,
+            )
+        )
+    return result
+
+
+@router.get("/reports/zones", response_model=ZoneStatisticsOut)
+def report_zone_statistics(
+    category: str | None = Query(default=None, max_length=40),
+    status_filter: str | None = Query(default=None, alias="status", max_length=30),
+    since_days: int | None = Query(default=None, ge=1, le=365),
+    user: User = Depends(current_user),
+    db: Session = Depends(get_db),
+) -> ZoneStatisticsOut:
+    validate_map_filters(category, status_filter)
+    since_time = datetime.now(timezone.utc) - timedelta(days=since_days) if since_days else None
+    rows = db.execute(
+        text(
+            """
+            WITH filtered AS (
+                SELECT
+                    ST_SnapToGrid(ST_Transform(location::geometry, 3116), 1000) AS cell,
+                    category,
+                    status
+                FROM reports
+                WHERE location IS NOT NULL
+                  AND ST_Y(location::geometry) BETWEEN 3.7 AND 5.2
+                  AND ST_X(location::geometry) BETWEEN -74.5 AND -73.5
+                  AND (CAST(:category AS VARCHAR) IS NULL OR category = :category)
+                  AND (CAST(:status AS VARCHAR) IS NULL OR status = :status)
+                  AND (CAST(:since_time AS TIMESTAMPTZ) IS NULL OR created_at >= :since_time)
+            ), grouped AS (
+                SELECT
+                    cell,
+                    COUNT(*) AS report_count,
+                    COUNT(*) FILTER (WHERE category = 'Automóvil') AS automobile_count,
+                    COUNT(*) FILTER (WHERE category = 'Motocicleta') AS motorcycle_count,
+                    COUNT(*) FILTER (WHERE category = 'Otro') AS other_count,
+                    COUNT(*) FILTER (WHERE status <> 'closed') AS open_count
+                FROM filtered
+                GROUP BY cell
+            )
+            SELECT
+                CONCAT(FLOOR(ST_X(cell) / 1000)::INT, ':', FLOOR(ST_Y(cell) / 1000)::INT) AS zone_id,
+                ST_Y(ST_Transform(ST_Centroid(cell), 4326)) AS latitude,
+                ST_X(ST_Transform(ST_Centroid(cell), 4326)) AS longitude,
+                report_count,
+                automobile_count,
+                motorcycle_count,
+                other_count,
+                open_count
+            FROM grouped
+            ORDER BY report_count DESC
+            """
+        ),
+        {"category": category, "status": status_filter, "since_time": since_time},
+    ).mappings().all()
+    zones = [dict(row) for row in rows]
+    return ZoneStatisticsOut(
+        cell_size_m=1000,
+        total_reports=sum(zone["report_count"] for zone in zones),
+        zones=zones,
+    )
 
 
 @router.get("/reports/{report_id}/photo")

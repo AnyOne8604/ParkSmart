@@ -12,7 +12,6 @@ import androidx.core.content.ContextCompat
 import androidx.core.content.FileProvider
 
 import androidx.compose.foundation.BorderStroke
-import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -60,7 +59,6 @@ import androidx.compose.material.icons.filled.Person
 import androidx.compose.material.icons.filled.PhotoCamera
 import androidx.compose.material.icons.filled.Place
 import androidx.compose.material.icons.filled.ReportProblem
-import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Visibility
 import androidx.compose.material.icons.filled.VisibilityOff
 import androidx.compose.material3.Button
@@ -69,6 +67,7 @@ import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.NavigationBar
@@ -85,6 +84,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.platform.LocalContext
@@ -93,10 +93,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.shadow
-import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.Path
-import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
@@ -105,14 +102,21 @@ import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.viewinterop.AndroidView
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.parksmart.app.R
+import com.parksmart.app.BuildConfig
 import com.parksmart.app.data.CriticalZone
 import com.parksmart.app.data.BOGOTA_LOCALITIES
 import com.parksmart.app.data.DashboardData
 import com.parksmart.app.data.ParkSmartApiRepository
+import com.parksmart.app.data.MapData
+import com.parksmart.app.data.MapReport
 import com.parksmart.app.data.ReportStatus
 import com.parksmart.app.data.ReportSummary
 import com.parksmart.app.data.ZonePriority
@@ -130,6 +134,28 @@ import com.google.android.gms.location.Priority
 import com.google.android.gms.tasks.CancellationTokenSource
 import java.io.File
 import java.io.FileOutputStream
+import okhttp3.Cache
+import okhttp3.OkHttpClient
+import org.json.JSONArray
+import org.json.JSONObject
+import org.maplibre.android.MapLibre
+import org.maplibre.android.camera.CameraUpdateFactory
+import org.maplibre.android.geometry.LatLng
+import org.maplibre.android.maps.MapView
+import org.maplibre.android.maps.MapLibreMap
+import org.maplibre.android.style.layers.CircleLayer
+import org.maplibre.android.style.layers.SymbolLayer
+import org.maplibre.android.style.sources.GeoJsonOptions
+import org.maplibre.android.style.sources.GeoJsonSource
+import org.maplibre.android.style.layers.PropertyFactory.circleColor
+import org.maplibre.android.style.layers.PropertyFactory.circleRadius
+import org.maplibre.android.style.layers.PropertyFactory.circleStrokeColor
+import org.maplibre.android.style.layers.PropertyFactory.circleStrokeWidth
+import org.maplibre.android.style.layers.PropertyFactory.textColor
+import org.maplibre.android.style.layers.PropertyFactory.textField
+import org.maplibre.android.style.layers.PropertyFactory.textSize
+import org.maplibre.android.style.expressions.Expression
+import org.maplibre.android.module.http.HttpRequestUtil
 
 private enum class AppRoute {
     LOGIN, HOME, REPORT, MAP, PROFILE, REPORTS, STATISTICS
@@ -213,7 +239,9 @@ fun ParkSmartApp() {
         when (route) {
             AppRoute.HOME -> HomeScreen(dashboard, insets, onNavigate = { routeName = it.name })
             AppRoute.REPORT -> ReportScreen(insets, state.busy, state.message, model::createReport)
-            AppRoute.MAP -> MapScreen(dashboard, insets)
+            AppRoute.MAP -> MapScreen(state.mapData, state.mapLoading, state.mapError, insets) { latitude, longitude, category, status, days, refreshZones ->
+                model.refreshMap(latitude, longitude, category, status, days, refreshZones)
+            }
             AppRoute.PROFILE -> ProfileScreen(dashboard, insets, onSignOut = { model.signOut(); routeName = AppRoute.LOGIN.name })
             AppRoute.REPORTS -> ReportsScreen(dashboard, insets, onBack = { routeName = AppRoute.HOME.name })
             AppRoute.STATISTICS -> StatisticsScreen(dashboard, insets, onBack = { routeName = AppRoute.HOME.name })
@@ -627,104 +655,248 @@ private fun VehicleChoice(label: String, icon: ImageVector, modifier: Modifier, 
 }
 
 @Composable
-private fun MapScreen(data: DashboardData, insets: PaddingValues) {
-    Column(modifier = Modifier.fillMaxSize().padding(insets).padding(horizontal = 18.dp)) {
-        ScreenHeading("Mapa de reportes", "Bogotá, Colombia")
-        Text("Vista esquemática. Los datos del mapa aún no están conectados.", modifier = Modifier.padding(bottom = 10.dp), color = MutedInk, fontSize = 11.sp)
-        Row(
-            modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp)).background(Color.White).padding(horizontal = 13.dp, vertical = 12.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            Icon(Icons.Filled.Search, contentDescription = null, tint = ParkGreen, modifier = Modifier.size(19.dp))
-            Spacer(Modifier.width(8.dp))
-            Text("Buscar dirección o localidad", color = MutedInk, fontSize = 12.sp)
-        }
-        Spacer(Modifier.height(12.dp))
-        Box(modifier = Modifier.weight(1f).fillMaxWidth().clip(RoundedCornerShape(16.dp))) {
-            DemoMapCanvas()
-            MapLabel("Bogotá", Modifier.align(Alignment.Center).offset(y = 16.dp))
-            MapLabel("Chapinero", Modifier.align(Alignment.TopEnd).padding(top = 76.dp, end = 22.dp))
-            MapLabel("Teusaquillo", Modifier.align(Alignment.BottomStart).padding(start = 32.dp, bottom = 78.dp))
-            MapPin(Color(0xFFE44E4E), Modifier.align(Alignment.Center).offset(x = 22.dp, y = (-24).dp))
-            MapPin(Color(0xFFF5A623), Modifier.align(Alignment.TopStart).padding(start = 74.dp, top = 116.dp))
-            MapPin(Color(0xFF0E9B69), Modifier.align(Alignment.BottomEnd).padding(end = 70.dp, bottom = 138.dp))
-            MapPin(Color(0xFFE44E4E), Modifier.align(Alignment.BottomStart).padding(start = 104.dp, bottom = 158.dp))
-            IconButton(
-                onClick = {},
-                modifier = Modifier.align(Alignment.BottomEnd).padding(12.dp).size(42.dp).shadow(3.dp, CircleShape).background(Color.White, CircleShape),
-            ) {
-                Icon(Icons.Filled.MyLocation, contentDescription = "Centrar mapa", tint = ParkGreen)
-            }
-        }
-        Spacer(Modifier.height(12.dp))
-        Row(
-            modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(14.dp)).background(Color.White).padding(horizontal = 14.dp, vertical = 11.dp),
-            horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            LegendDot(Danger, "Alta")
-            LegendDot(Warning, "Media")
-            LegendDot(ParkGreen, "Baja")
-            Text("${data.totalReports} reportes", color = Ink, fontSize = 11.sp, fontWeight = FontWeight.SemiBold)
-        }
-        Spacer(Modifier.height(12.dp))
-    }
-}
+private fun MapScreen(
+    data: MapData,
+    loading: Boolean,
+    error: String?,
+    insets: PaddingValues,
+    onLoad: (Double, Double, String?, String?, Int?, Boolean) -> Unit,
+) {
+    var category by rememberSaveable { mutableStateOf("Todas") }
+    var status by rememberSaveable { mutableStateOf("Todos") }
+    var period by rememberSaveable { mutableStateOf("30 días") }
+    var latitude by rememberSaveable { mutableStateOf(4.7110) }
+    var longitude by rememberSaveable { mutableStateOf(-74.0721) }
+    var selectedReportId by rememberSaveable { mutableStateOf<String?>(null) }
+    var recenterToken by rememberSaveable { mutableStateOf(0) }
+    val days = when (period) { "7 días" -> 7; "90 días" -> 90; "Todo" -> null; else -> 30 }
+    val selectedReport = data.reports.firstOrNull { it.id == selectedReportId }
 
-@Composable
-private fun DemoMapCanvas() {
-    Canvas(Modifier.fillMaxSize().background(Color(0xFFE8F1E9))) {
-        val road = Color(0xFFFDFEFC)
-        val minor = Color(0xFFD5E2D8)
-        val paths = listOf(
-            listOf(Offset(size.width * 0.02f, size.height * 0.25f), Offset(size.width * 0.32f, size.height * 0.35f), Offset(size.width * 0.55f, size.height * 0.28f), Offset(size.width * 0.98f, size.height * 0.38f)),
-            listOf(Offset(size.width * 0.08f, size.height * 0.68f), Offset(size.width * 0.42f, size.height * 0.58f), Offset(size.width * 0.70f, size.height * 0.72f), Offset(size.width * 1.02f, size.height * 0.61f)),
-            listOf(Offset(size.width * 0.35f, -10f), Offset(size.width * 0.44f, size.height * 0.32f), Offset(size.width * 0.40f, size.height * 0.68f), Offset(size.width * 0.53f, size.height + 10f)),
-        )
-        paths.forEach { points ->
-            val path = Path().apply {
-                moveTo(points.first().x, points.first().y)
-                cubicTo(points[1].x, points[1].y, points[2].x, points[2].y, points[3].x, points[3].y)
-            }
-            drawPath(path, road, style = Stroke(width = 24.dp.toPx()))
-            drawPath(path, minor, style = Stroke(width = 1.dp.toPx()))
-        }
-        for (i in 0..7) {
-            val x = size.width * (0.10f + i * 0.12f)
-            drawLine(minor, Offset(x, size.height * 0.05f), Offset(x - size.width * 0.07f, size.height * 0.95f), 1.dp.toPx())
-        }
-        for (i in 0..5) {
-            val y = size.height * (0.08f + i * 0.17f)
-            drawLine(minor, Offset(size.width * 0.04f, y), Offset(size.width * 0.96f, y + size.height * 0.04f), 1.dp.toPx())
-        }
-        drawCircle(Color(0xFFCEE6D6), radius = 36.dp.toPx(), center = Offset(size.width * 0.78f, size.height * 0.23f))
-        drawCircle(Color(0xFFD7EBD9), radius = 24.dp.toPx(), center = Offset(size.width * 0.17f, size.height * 0.80f))
+    LaunchedEffect(category, status, period) {
+        onLoad(latitude, longitude, category.takeUnless { it == "Todas" }, status.toStatusCode(), days, true)
     }
-}
 
-@Composable
-private fun MapPin(color: Color, modifier: Modifier = Modifier) {
-    Box(
-        modifier = modifier.size(27.dp).shadow(3.dp, CircleShape).background(color, CircleShape),
-        contentAlignment = Alignment.Center,
+    Column(
+        modifier = Modifier.fillMaxSize().padding(insets).verticalScroll(rememberScrollState()).padding(horizontal = 16.dp),
     ) {
-        Box(Modifier.size(9.dp).background(Color.White, CircleShape))
+        ScreenHeading("Mapa de reportes", "Reportes con ubicación GPS · Bogotá")
+        Row(horizontalArrangement = Arrangement.spacedBy(6.dp), modifier = Modifier.fillMaxWidth()) {
+            MapFilter(label = category, options = listOf("Todas", "Automóvil", "Motocicleta", "Otro"), onSelect = { category = it }, modifier = Modifier.weight(1.1f))
+            MapFilter(label = status, options = listOf("Todos", "Recibido", "En revisión", "Cerrado"), onSelect = { status = it }, modifier = Modifier.weight(1.1f))
+            MapFilter(label = period, options = listOf("7 días", "30 días", "90 días", "Todo"), onSelect = { period = it }, modifier = Modifier.weight(0.8f))
+        }
+        Spacer(Modifier.height(10.dp))
+        Box(Modifier.fillMaxWidth().height(390.dp).clip(RoundedCornerShape(12.dp)).background(Color(0xFFE9EFEA))) {
+            LiveReportsMap(
+                reports = data.reports,
+                recenterToken = recenterToken,
+                onCenterChanged = { lat, lon ->
+                    if (kotlin.math.abs(latitude - lat) > 0.0005 || kotlin.math.abs(longitude - lon) > 0.0005) {
+                        latitude = lat
+                        longitude = lon
+                        onLoad(lat, lon, category.takeUnless { it == "Todas" }, status.toStatusCode(), days, false)
+                    }
+                },
+                onReportSelected = { selectedReportId = it },
+            )
+            Text(
+                "© OpenStreetMap contributors",
+                modifier = Modifier.align(Alignment.BottomEnd).padding(6.dp).background(Color.White.copy(alpha = 0.88f), RoundedCornerShape(4.dp)).padding(horizontal = 6.dp, vertical = 3.dp),
+                color = Ink,
+                fontSize = 9.sp,
+            )
+            if (loading) CircularProgressIndicator(Modifier.align(Alignment.TopEnd).padding(12.dp).size(22.dp), color = ParkGreen, strokeWidth = 2.dp)
+            IconButton(
+                onClick = { latitude = 4.7110; longitude = -74.0721; recenterToken += 1; onLoad(latitude, longitude, category.takeUnless { it == "Todas" }, status.toStatusCode(), days, false) },
+                modifier = Modifier.align(Alignment.TopEnd).padding(top = 44.dp, end = 10.dp).size(42.dp).shadow(3.dp, CircleShape).background(Color.White, CircleShape),
+            ) {
+                Icon(Icons.Filled.MyLocation, contentDescription = "Centrar en Bogotá", tint = ParkGreen)
+            }
+        }
+        if (error != null) {
+            Text(error, color = Danger, fontSize = 12.sp, modifier = Modifier.padding(top = 8.dp))
+        }
+        selectedReport?.let { report ->
+            Spacer(Modifier.height(8.dp))
+            SelectedMapReport(report)
+        }
+        Spacer(Modifier.height(10.dp))
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+            Text(if (data.reports.size == 500) "500+ reportes visibles" else "${data.reports.size} reportes en el área", color = Ink, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
+            Text("${data.totalReports} en zonas", color = MutedInk, fontSize = 11.sp)
+        }
+        Text("Estadísticas PostGIS · cuadrículas de 1 km", color = MutedInk, fontSize = 11.sp, modifier = Modifier.padding(top = 3.dp, bottom = 7.dp))
+        if (data.zones.isEmpty()) {
+            Text("Aún no hay reportes con coordenadas para calcular zonas.", color = MutedInk, fontSize = 12.sp, modifier = Modifier.padding(vertical = 8.dp))
+        } else {
+            data.zones.take(6).forEach { zone ->
+                Row(
+                    Modifier.fillMaxWidth().padding(bottom = 6.dp).clip(RoundedCornerShape(8.dp)).background(Color.White).padding(horizontal = 12.dp, vertical = 9.dp),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Column(Modifier.weight(1f)) {
+                        Text("Cuadrícula ${zone.id}", color = Ink, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+                        Text("Abiertos ${zone.open} · Auto. ${zone.automobiles} · Moto. ${zone.motorcycles} · Otros ${zone.other}", color = MutedInk, fontSize = 10.sp)
+                    }
+                    Text("${zone.reports}", color = ParkGreen, fontWeight = FontWeight.Bold, fontSize = 16.sp)
+                }
+            }
+        }
+        Text("Las direcciones ingresadas manualmente no aparecen en el mapa hasta contar con coordenadas.", color = MutedInk, fontSize = 10.sp, modifier = Modifier.padding(top = 3.dp, bottom = 12.dp))
+    }
+}
+
+private fun String.toStatusCode(): String? = when (this) {
+    "Recibido" -> "received"
+    "En revisión" -> "in_review"
+    "Cerrado" -> "closed"
+    else -> null
+}
+
+private fun String.toStatusLabel(): String = when (this) {
+    "received" -> "Recibido"
+    "in_review" -> "En revisión"
+    "closed" -> "Cerrado"
+    else -> this
+}
+
+@Composable
+private fun MapFilter(label: String, options: List<String>, onSelect: (String) -> Unit, modifier: Modifier = Modifier) {
+    var expanded by remember { mutableStateOf(false) }
+    Box(modifier) {
+        OutlinedButton(onClick = { expanded = true }, modifier = Modifier.fillMaxWidth(), contentPadding = PaddingValues(horizontal = 7.dp, vertical = 7.dp), shape = RoundedCornerShape(8.dp)) {
+            Text(label, maxLines = 1, fontSize = 10.sp, color = Ink)
+        }
+        DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
+            options.forEach { option ->
+                DropdownMenuItem(text = { Text(option, fontSize = 13.sp) }, onClick = { onSelect(option); expanded = false })
+            }
+        }
     }
 }
 
 @Composable
-private fun MapLabel(text: String, modifier: Modifier = Modifier) {
-    Text(text, modifier = modifier.clip(RoundedCornerShape(6.dp)).background(Color.White.copy(alpha = 0.86f)).padding(horizontal = 7.dp, vertical = 4.dp), color = Ink, fontSize = 10.sp, fontWeight = FontWeight.Medium)
+private fun SelectedMapReport(report: MapReport) {
+    Column(Modifier.fillMaxWidth().clip(RoundedCornerShape(8.dp)).background(Color.White).padding(12.dp)) {
+        Text("${report.category} · ${report.status.toStatusLabel()}", fontSize = 12.sp, fontWeight = FontWeight.SemiBold, color = Ink)
+        Text("${report.locality}, ${report.address}", fontSize = 11.sp, color = MutedInk)
+        Text(report.createdAt.take(10), fontSize = 10.sp, color = MutedInk)
+    }
 }
 
 @Composable
-private fun LegendDot(color: Color, text: String) {
-    Row(verticalAlignment = Alignment.CenterVertically) {
-        Box(Modifier.size(8.dp).background(color, CircleShape))
-        Spacer(Modifier.width(5.dp))
-        Text(text, color = MutedInk, fontSize = 10.sp)
+private fun LiveReportsMap(
+    reports: List<MapReport>,
+    recenterToken: Int,
+    onCenterChanged: (Double, Double) -> Unit,
+    onReportSelected: (String) -> Unit,
+) {
+    val context = LocalContext.current
+    val lifecycleOwner = LocalLifecycleOwner.current
+    val currentOnCenterChanged by rememberUpdatedState(onCenterChanged)
+    val currentOnReportSelected by rememberUpdatedState(onReportSelected)
+    val mapView = remember {
+        MapLibre.getInstance(context.applicationContext)
+        HttpRequestUtil.setOkHttpClient(
+            OkHttpClient.Builder()
+                .cache(Cache(File(context.cacheDir, "map-tiles"), 50L * 1024 * 1024))
+                .addNetworkInterceptor { chain ->
+                    chain.proceed(chain.request().newBuilder().header("User-Agent", "ParkSmart/0.4 (Android)").build())
+                }
+                .build(),
+        )
+        MapView(context).also { it.onCreate(null) }
+    }
+    var map by remember { mutableStateOf<MapLibreMap?>(null) }
+    var mapStyle by remember { mutableStateOf<org.maplibre.android.maps.Style?>(null) }
+    val geoJson = remember(reports) {
+        JSONObject().put("type", "FeatureCollection").put("features", JSONArray().apply {
+            reports.forEach { report ->
+                put(
+                    JSONObject()
+                        .put("type", "Feature")
+                        .put("geometry", JSONObject().put("type", "Point").put("coordinates", JSONArray().put(report.longitude).put(report.latitude)))
+                        .put("properties", JSONObject().put("report_id", report.id).put("category", report.category)),
+                )
+            }
+        }).toString()
+    }
+
+    AndroidView(factory = { mapView }, modifier = Modifier.fillMaxSize())
+    androidx.compose.runtime.DisposableEffect(lifecycleOwner, mapView) {
+        val observer = LifecycleEventObserver { _, event ->
+            when (event) {
+                Lifecycle.Event.ON_START -> mapView.onStart()
+                Lifecycle.Event.ON_RESUME -> mapView.onResume()
+                Lifecycle.Event.ON_PAUSE -> mapView.onPause()
+                Lifecycle.Event.ON_STOP -> mapView.onStop()
+                else -> Unit
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose {
+            lifecycleOwner.lifecycle.removeObserver(observer)
+            mapView.onDestroy()
+        }
+    }
+    androidx.compose.runtime.LaunchedEffect(mapView) {
+        mapView.getMapAsync { liveMap ->
+            map = liveMap
+            liveMap.setStyle(
+                org.maplibre.android.maps.Style.Builder().fromJson(OSM_RASTER_STYLE),
+            ) { style ->
+                mapStyle = style
+                val source = GeoJsonSource("park-reports", geoJson, GeoJsonOptions().withCluster(true).withClusterRadius(48).withClusterMaxZoom(14))
+                style.addSource(source)
+                val clusters = CircleLayer("report-clusters", "park-reports")
+                clusters.setProperties(circleColor("#12865B"), circleRadius(18f), circleStrokeColor("#FFFFFF"), circleStrokeWidth(2f))
+                clusters.setFilter(Expression.has("point_count"))
+                style.addLayer(clusters)
+                val clusterCount = SymbolLayer("report-cluster-count", "park-reports")
+                clusterCount.setProperties(textField(Expression.get("point_count_abbreviated")), textSize(12f), textColor("#FFFFFF"))
+                clusterCount.setFilter(Expression.has("point_count"))
+                style.addLayer(clusterCount)
+                val reportPoints = CircleLayer("report-points", "park-reports")
+                reportPoints.setProperties(circleColor("#D94841"), circleRadius(7f), circleStrokeColor("#FFFFFF"), circleStrokeWidth(2f))
+                reportPoints.setFilter(Expression.not(Expression.has("point_count")))
+                style.addLayer(reportPoints)
+                liveMap.cameraPosition = org.maplibre.android.camera.CameraPosition.Builder()
+                    .target(LatLng(4.7110, -74.0721)).zoom(11.0).build()
+                liveMap.addOnCameraIdleListener {
+                    liveMap.cameraPosition.target?.let { currentOnCenterChanged(it.latitude, it.longitude) }
+                }
+                liveMap.addOnMapClickListener { coordinate ->
+                    val screenPoint = liveMap.projection.toScreenLocation(coordinate)
+                    val features = liveMap.queryRenderedFeatures(screenPoint, "report-clusters", "report-points")
+                    val feature = features.firstOrNull()
+                    if (feature != null) {
+                        val point = feature.geometry() as? org.maplibre.geojson.Point
+                        if (feature.hasProperty("point_count")) {
+                            point?.let { liveMap.animateCamera(CameraUpdateFactory.newLatLngZoom(LatLng(it.latitude(), it.longitude()), (liveMap.cameraPosition.zoom + 2).coerceAtMost(17.0))) }
+                        } else if (feature.hasProperty("report_id")) {
+                            currentOnReportSelected(feature.getStringProperty("report_id"))
+                        }
+                    }
+                    true
+                }
+                currentOnCenterChanged(4.7110, -74.0721)
+            }
+        }
+    }
+    androidx.compose.runtime.LaunchedEffect(mapStyle, geoJson) {
+        mapStyle?.getSourceAs<GeoJsonSource>("park-reports")?.setGeoJson(geoJson)
+    }
+    androidx.compose.runtime.LaunchedEffect(map, recenterToken) {
+        if (recenterToken > 0) {
+            map?.animateCamera(CameraUpdateFactory.newLatLngZoom(LatLng(4.7110, -74.0721), 11.0))
+        }
     }
 }
+
+private const val OSM_RASTER_STYLE = """
+    {"version":8,"sources":{"osm":{"type":"raster","tiles":["${BuildConfig.MAP_TILE_URL}"],"tileSize":256,"attribution":"© OpenStreetMap contributors"}},"layers":[{"id":"background","type":"background","paint":{"background-color":"#e9efea"}},{"id":"osm-raster","type":"raster","source":"osm","paint":{"raster-opacity":1.0}}]}
+"""
 
 @Composable
 private fun ProfileScreen(data: DashboardData, insets: PaddingValues, onSignOut: () -> Unit) {

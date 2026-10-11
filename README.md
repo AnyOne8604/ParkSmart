@@ -1,6 +1,6 @@
 # ParkSmart
 
-Aplicación Android para reportar situaciones de estacionamiento indebido. La versión `v0.3.0` permite completar la ubicación con localidad y dirección manual, sin exigir permiso GPS, muestra esos datos en el historial e incluye pgAdmin para administrar la base local.
+Aplicación Android para reportar situaciones de estacionamiento indebido. La versión `v0.4.0` incorpora mapa interactivo de Bogotá, búsqueda de reportes georreferenciados, filtros y agregados espaciales con PostGIS.
 
 ## Requisitos
 
@@ -11,7 +11,7 @@ Aplicación Android para reportar situaciones de estacionamiento indebido. La ve
 - 8 GB de RAM como mínimo recomendado para Android Studio, emulador y Docker juntos.
 - Conexión a Internet para descargar Gradle, dependencias Android e imágenes Docker la primera vez.
 
-Versiones del proyecto Android: AGP 9.4.0, Gradle 9.6.0, Compose compiler 2.4.10, Compose BOM 2026.09.00, `compileSdk=37`, `targetSdk=36`, `minSdk=26`, Java 17.
+Versiones del proyecto Android: AGP 9.4.0, Gradle 9.6.0, Compose compiler 2.4.10, Compose BOM 2026.09.00, MapLibre Native 11.8.0, `compileSdk=37`, `targetSdk=36`, `minSdk=26`, Java 17.
 
 ## Preparar el backend
 
@@ -34,7 +34,8 @@ Alembic aplica las migraciones al iniciar la API. La migración v0.3 conserva lo
 2. Sincroniza Gradle y selecciona `app` como configuración de ejecución.
 3. Inicia el emulador API 37 o conecta el teléfono a la misma red del equipo.
 4. Para emulador, el cliente usa `http://10.0.2.2:8000/`, que reenvía al host. Para un teléfono físico, agrega `parksmart.apiBaseUrl=http://IP_DEL_PC:8000/` a `local.properties` (por ejemplo `http://192.168.1.20:8000/`) y permite el puerto 8000 en el firewall. `local.properties` se ignora en Git, por lo que esta dirección no se comparte ni altera el proyecto de otros equipos.
-5. Asegúrate de que Docker está ejecutando la API, pulsa **Run** e inicia sesión creando una cuenta manual.
+5. Opcionalmente, define `parksmart.mapTileUrl` en `local.properties` para usar un proveedor de teselas compatible con el estilo raster de MapLibre. Si no se define, se usa OpenStreetMap durante desarrollo.
+6. Asegúrate de que Docker está ejecutando la API, pulsa **Run** e inicia sesión creando una cuenta manual.
 
 La API local usa HTTP sin TLS y `usesCleartextTraffic` está activado exclusivamente para desarrollo. No publicar esta configuración en producción. En Android, la galería usa Photo Picker sin permiso amplio de almacenamiento; cámara y ubicación solicitan permiso al utilizarlas. GPS se obtiene solo en primer plano.
 
@@ -56,15 +57,15 @@ ParkSmart/
 |       `-- versions/0002_manual_report_location.py
 |-- backend/test_localities.py
 |-- Contexto/                     # Mockup, logo y material del proyecto
-|-- Documentacion/                # Documentos de versiones
-|-- Documentacion_Ampliacion_ParkSmart_v2.docx
+|-- Documentacion/                # Documentos de versiones anteriores
 |-- Documentacion_Ampliacion_ParkSmart_v3.docx
+|-- Documentacion_Ampliacion_ParkSmart_v4.docx
 |-- docker-compose.yml
 |-- .env.example
 `-- README.md
 ```
 
-## Funcionalidades de v0.3.0
+## Funcionalidades de v0.4.0
 
 - Registro manual e inicio de sesión por correo y contraseña.
 - Contraseñas con Argon2 y sesión JWT guardada localmente en Android.
@@ -76,7 +77,16 @@ ParkSmart/
 - FastAPI documentada en OpenAPI (`/docs`) con autenticación, perfil, creación/listado de reportes, descarga autenticada de foto y resumen del usuario.
 - PostgreSQL 17 + PostGIS 3.5, migración Alembic, índice GiST para coordenadas y volúmenes persistentes.
 - pgAdmin en `http://localhost:5050` para consultar tablas y registros de desarrollo.
+- Mapa interactivo con MapLibre Native y teselas raster de OpenStreetMap, centrado en Bogotá y sin API key de Google.
+- Marcadores agrupados por clusters en el cliente; tocar un grupo acerca la vista y tocar un punto muestra los datos del reporte.
+- Filtros por categoría de vehículo, estado y periodo (7, 30, 90 días o todo el historial).
+- API autenticada de reportes cercanos mediante radio de 25 km y estadísticas PostGIS en cuadrículas de 1 km proyectadas en EPSG:3116.
+- Estadísticas por cuadrícula: total, categorías y reportes abiertos; respetan los filtros del mapa.
 - Icono adaptativo del launcher basado en el logo de ParkSmart.
+
+MapLibre es el motor cartográfico; OpenStreetMap aporta los datos/teselas de desarrollo. `tile.openstreetmap.org` es un servicio de mejor esfuerzo: exige atribución, identificación y respeto de caché, y no es una infraestructura de producción ni permite precarga/offline. Cambia `parksmart.mapTileUrl` a un proveedor contratado o teselas propias antes de desplegar.
+
+La geocodificación de direcciones manuales se evaluó y no se activa en v0.4: los domicilios no se envían automáticamente a terceros. Nominatim público limita el uso a un máximo absoluto de una solicitud por segundo y exige identificar la app y mostrar atribución. Antes de añadir búsqueda de dirección, se debe pedir consentimiento, limitar frecuencia y revisar privacidad. Una dirección manual no se convierte en coordenadas todavía.
 
 ## API v1
 
@@ -87,6 +97,8 @@ ParkSmart/
 | `GET` | `/api/v1/auth/me` | Bearer | Consultar perfil |
 | `POST` | `/api/v1/reports` | Bearer | Crear reporte multipart con foto, localidad y dirección; coordenadas GPS opcionales |
 | `GET` | `/api/v1/reports` | Bearer | Listar reportes propios |
+| `GET` | `/api/v1/reports/nearby` | Bearer | Reportes con GPS por radio; filtros `category`, `status`, `since_days` |
+| `GET` | `/api/v1/reports/zones` | Bearer | Estadísticas PostGIS por cuadrícula de 1 km con filtros equivalentes |
 | `GET` | `/api/v1/reports/{id}/photo` | Bearer | Obtener foto propia |
 | `GET` | `/api/v1/dashboard` | Bearer | Resumen y reportes recientes |
 | `GET` | `/health` | Público | Verificar API y base de datos |
@@ -96,8 +108,11 @@ ParkSmart/
 - Esta es una base de desarrollo local, no una configuración de producción: secretos, HTTP, CORS, almacenamiento, límites y controles antiabuso requieren endurecimiento antes de desplegar.
 - Fotos limitadas a JPEG/PNG/WebP y 10 MB en el backend. Android convierte la imagen seleccionada a JPEG en caché antes de subirla.
 - El cliente envía los reportes, pero no muestra aún imágenes descargadas, paginación ni edición/eliminación.
-- La dirección manual es texto y no se geocodifica; un reporte sin GPS no puede ubicarse todavía en el mapa ni participar en análisis espaciales.
-- El mapa conserva un dibujo orientativo y no presenta mapas base ni puntos reales; las estadísticas por zona no se calculan todavía.
+- Los reportes sin GPS no se muestran como puntos ni participan en agregados espaciales; su dirección permanece en el historial.
+- Las teselas OSM estándar son solo para desarrollo/pruebas interactivas; no usarlas para tráfico alto ni descargas offline. Producción requiere proveedor con SLA o servicio propio.
+- El endpoint de mapa busca en un radio de 25 km alrededor de la cámara y devuelve como máximo 500 reportes; no hay paginación espacial ni selector de radio.
+- Las zonas son cuadrículas métricas de 1 km (EPSG:3116), no localidades oficiales ni polígonos administrativos.
+- Las direcciones manuales no se geocodifican todavía.
 - La cámara se abre mediante el capturador del sistema tras pedir permiso a ParkSmart; no hay visor CameraX integrado.
 - No hay recuperación de contraseña, verificación de correo, cierre remoto de sesiones ni roles administrativos.
 - No se integra IA, clasificación automática, analítica agregada ni notificaciones push.
@@ -123,12 +138,11 @@ ParkSmart/
 
 La hoja de ruta recomendada para las siguientes versiones es:
 
-1. **v0.4 - Mapa y exploración:** integrar un proveedor de mapas, mostrar reportes cercanos con filtros por categoría/fecha/estado, agrupación de marcadores y cálculo de estadísticas por zona usando PostGIS; evaluar geocodificación de direcciones manuales.
-2. **v0.5 - Confianza y gestión:** verificación de correo y recuperación de contraseña; flujo de moderación y roles administrativos; reportar contenido incorrecto; políticas visibles de privacidad, consentimiento y retención de fotos.
-3. **v0.6 - Analítica e inteligencia:** panel de tendencias y zonas críticas; evaluar clasificación asistida por IA para categorizar reportes, siempre con revisión humana y métricas de calidad.
-4. **v1.0 - Preparación para uso real:** desplegar API y base de datos en infraestructura administrada; HTTPS/TLS, secretos gestionados, límites antiabuso, copias de seguridad, monitoreo, CI/CD, pruebas de seguridad y publicación Android.
+1. **v0.5 - Confianza y gestión:** verificación de correo y recuperación de contraseña; flujo de moderación y roles administrativos; reportar contenido incorrecto; políticas visibles de privacidad, consentimiento y retención de fotos.
+2. **v0.6 - Analítica e inteligencia:** panel de tendencias y zonas críticas; evaluar clasificación asistida por IA para categorizar reportes, siempre con revisión humana y métricas de calidad.
+3. **v1.0 - Preparación para uso real:** desplegar API y base de datos en infraestructura administrada; HTTPS/TLS, secretos gestionados, límites antiabuso, copias de seguridad, monitoreo, CI/CD, pruebas de seguridad y publicación Android.
 
-Antes de avanzar de versión, conviene cerrar también estos requisitos transversales: pruebas de integración Android/API, paginación, límites y validación del contenido de imágenes, estrategia de retención, accesibilidad y pruebas en teléfonos reales. Esta hoja de ruta es una propuesta; los mapas reales, moderación, IA y despliegue productivo no forman parte de v0.3.0.
+Antes de avanzar de versión, conviene cerrar también estos requisitos transversales: pruebas de integración Android/API, paginación espacial, límites y validación del contenido de imágenes, estrategia de retención, accesibilidad y pruebas en teléfonos reales. La geocodificación, moderación, IA y despliegue productivo no forman parte de v0.4.0.
 
 ## Referencias técnicas
 
@@ -138,3 +152,6 @@ Antes de avanzar de versión, conviene cerrar también estos requisitos transver
 - [Carga de archivos con FastAPI](https://fastapi.tiangolo.com/tutorial/request-files/)
 - [Imagen Docker PostGIS](https://github.com/postgis/docker-postgis)
 - [Localidades de Bogotá](https://bogota.gov.co/mi-ciudad/gobierno/parques-y-monumentos-de-bogota-y-sus-20-localidades-2024)
+- [MapLibre Native Android](https://maplibre.org/maplibre-native/android/examples/getting-started/)
+- [Política de uso de teselas OpenStreetMap](https://operations.osmfoundation.org/policies/tiles/)
+- [Política de uso de Nominatim](https://operations.osmfoundation.org/policies/nominatim/)

@@ -3,6 +3,7 @@ package com.parksmart.app.ui
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.parksmart.app.data.DashboardData
+import com.parksmart.app.data.MapData
 import com.parksmart.app.data.ParkSmartUser
 import com.parksmart.app.data.ParkSmartApiRepository
 import org.json.JSONObject
@@ -12,17 +13,24 @@ import java.io.File
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
 
 data class ParkSmartUiState(
     val user: ParkSmartUser? = null,
     val dashboard: DashboardData? = null,
     val busy: Boolean = false,
     val message: String? = null,
+    val mapData: MapData = MapData(),
+    val mapLoading: Boolean = false,
+    val mapError: String? = null,
 )
 
 class ParkSmartViewModel(private val repository: ParkSmartApiRepository) : ViewModel() {
     private val _state = MutableStateFlow(ParkSmartUiState())
     val state = _state.asStateFlow()
+    private var nearbyMapJob: Job? = null
+    private var zoneStatsJob: Job? = null
 
     init {
         repository.restoreUser()?.let { user ->
@@ -51,6 +59,31 @@ class ParkSmartViewModel(private val repository: ParkSmartApiRepository) : ViewM
             runCatching { repository.loadDashboard() }
                 .onSuccess { _state.value = _state.value.copy(dashboard = it) }
                 .onFailure { error -> _state.value = _state.value.copy(message = error.messageForUser()) }
+        }
+    }
+
+    fun refreshMap(latitude: Double, longitude: Double, category: String?, status: String?, sinceDays: Int?, refreshZones: Boolean = true) {
+        nearbyMapJob?.cancel()
+        nearbyMapJob = viewModelScope.launch {
+            delay(250)
+            _state.value = _state.value.copy(mapLoading = true, mapError = null)
+            runCatching { repository.loadNearbyMapReports(latitude, longitude, category, status, sinceDays) }
+                .onSuccess { reports -> _state.value = _state.value.copy(mapData = _state.value.mapData.copy(reports = reports), mapLoading = false) }
+                .onFailure { _state.value = _state.value.copy(mapLoading = false, mapError = it.messageForUser()) }
+        }
+        if (refreshZones) {
+            zoneStatsJob?.cancel()
+            zoneStatsJob = viewModelScope.launch {
+                delay(250)
+                runCatching { repository.loadZoneStatistics(category, status, sinceDays) }
+                    .onSuccess { stats ->
+                        _state.value = _state.value.copy(
+                            mapData = _state.value.mapData.copy(zones = stats.zones, totalReports = stats.totalReports),
+                            mapError = null,
+                        )
+                    }
+                    .onFailure { _state.value = _state.value.copy(mapError = it.messageForUser()) }
+            }
         }
     }
 

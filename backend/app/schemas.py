@@ -44,3 +44,31 @@ class ReportOut(BaseModel):
 class DashboardOut(BaseModel):
     total_reports: int
     reports: list[ReportOut]
+
+
+class NearbyReportOut(BaseModel):
+    id: UUID
+    category: str
+    latitude: float
+    longitude: float
+    locality: str
+    address: str
+    status: str
+    created_at: datetime
+
+
+class ZoneStatisticOut(BaseModel):
+    zone_id: str
+    latitude: float
+    longitude: float
+    report_count: int
+    automobile_count: int
+    motorcycle_count: int
+    other_count: int
+    open_count: int
+
+
+class ZoneStatisticsOut(BaseModel):
+    cell_size_m: int
+    total_reports: int
+    zones: list[ZoneStatisticOut]

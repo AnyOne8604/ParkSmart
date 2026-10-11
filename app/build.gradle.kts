@@ -10,6 +10,7 @@ val localProperties = Properties().apply {
     if (propertiesFile.exists()) propertiesFile.inputStream().use { load(it) }
 }
 val parksmartApiBaseUrl = localProperties.getProperty("parksmart.apiBaseUrl", "http://10.0.2.2:8000/")
+val parksmartMapTileUrl = localProperties.getProperty("parksmart.mapTileUrl", "https://tile.openstreetmap.org/{z}/{x}/{y}.png")
 
 android {
     namespace = "com.parksmart.app"
@@ -19,9 +20,10 @@ android {
         applicationId = "com.parksmart.app"
         minSdk = 26
         targetSdk = 36
-        versionCode = 3
-        versionName = "0.3.0"
+        versionCode = 4
+        versionName = "0.4.0"
         buildConfigField("String", "API_BASE_URL", "\"$parksmartApiBaseUrl\"")
+        buildConfigField("String", "MAP_TILE_URL", "\"$parksmartMapTileUrl\"")
     }
 
     buildFeatures {
@@ -52,6 +54,7 @@ dependencies {
     implementation("com.squareup.retrofit2:converter-gson:3.0.0")
     implementation("com.squareup.okhttp3:okhttp:5.3.0")
     implementation("com.google.android.gms:play-services-location:21.4.0")
+    implementation("org.maplibre.gl:android-sdk:11.8.0")
     implementation("androidx.core:core-ktx:1.17.0")
     debugImplementation("androidx.compose.ui:ui-tooling")
 }

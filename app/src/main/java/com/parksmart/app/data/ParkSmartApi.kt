@@ -15,6 +15,7 @@ import retrofit2.http.GET
 import retrofit2.http.Multipart
 import retrofit2.http.POST
 import retrofit2.http.Part
+import retrofit2.http.Query
 import com.google.gson.annotations.SerializedName
 import java.io.File
 
@@ -35,11 +36,53 @@ data class ApiReport(
     @SerializedName("created_at") val createdAt: String,
 )
 data class ApiDashboard(@SerializedName("total_reports") val totalReports: Int, val reports: List<ApiReport>)
+data class ApiNearbyReport(
+    val id: String,
+    val category: String,
+    val latitude: Double,
+    val longitude: Double,
+    val locality: String,
+    val address: String,
+    val status: String,
+    @SerializedName("created_at") val createdAt: String,
+)
+data class ApiZone(
+    @SerializedName("zone_id") val zoneId: String,
+    val latitude: Double,
+    val longitude: Double,
+    @SerializedName("report_count") val reportCount: Int,
+    @SerializedName("automobile_count") val automobileCount: Int,
+    @SerializedName("motorcycle_count") val motorcycleCount: Int,
+    @SerializedName("other_count") val otherCount: Int,
+    @SerializedName("open_count") val openCount: Int,
+)
+data class ApiZoneStatistics(
+    @SerializedName("cell_size_m") val cellSizeM: Int,
+    @SerializedName("total_reports") val totalReports: Int,
+    val zones: List<ApiZone>,
+)
 
 interface ParkSmartApi {
     @POST("api/v1/auth/register") suspend fun register(@Body body: RegisterRequest): AuthResponse
     @POST("api/v1/auth/login") suspend fun login(@Body body: AuthRequest): AuthResponse
     @GET("api/v1/dashboard") suspend fun dashboard(): ApiDashboard
+
+    @GET("api/v1/reports/nearby")
+    suspend fun nearbyReports(
+        @Query("latitude") latitude: Double,
+        @Query("longitude") longitude: Double,
+        @Query("radius_m") radiusM: Int,
+        @Query("category") category: String?,
+        @Query("status") status: String?,
+        @Query("since_days") sinceDays: Int?,
+    ): List<ApiNearbyReport>
+
+    @GET("api/v1/reports/zones")
+    suspend fun zoneStatistics(
+        @Query("category") category: String?,
+        @Query("status") status: String?,
+        @Query("since_days") sinceDays: Int?,
+    ): ApiZoneStatistics
 
     @Multipart
     @POST("api/v1/reports")
@@ -80,6 +123,20 @@ class ParkSmartApiRepository(context: Context) {
             ReportSummary(report.category, report.locality, report.address, report.createdAt, ReportStatus.RECEIVED)
         }
         return DashboardData(currentUser(), emptyList(), reports, response.totalReports)
+    }
+
+    suspend fun loadNearbyMapReports(latitude: Double, longitude: Double, category: String?, status: String?, sinceDays: Int?): List<MapReport> =
+        api.nearbyReports(latitude, longitude, 25000, category, status, sinceDays).map {
+            MapReport(it.id, it.category, it.latitude, it.longitude, it.locality, it.address, it.status, it.createdAt)
+        }
+
+    suspend fun loadZoneStatistics(category: String?, status: String?, sinceDays: Int?): MapData {
+        val stats = api.zoneStatistics(category, status, sinceDays)
+        return MapData(
+            reports = emptyList(),
+            zones = stats.zones.map { MapZone(it.zoneId, it.latitude, it.longitude, it.reportCount, it.automobileCount, it.motorcycleCount, it.otherCount, it.openCount) },
+            totalReports = stats.totalReports,
+        )
     }
 
     suspend fun sendReport(
