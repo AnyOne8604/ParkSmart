@@ -27,8 +27,10 @@ data class ApiReport(
     val category: String,
     val description: String,
     @SerializedName("photo_url") val photoUrl: String,
-    val latitude: Double,
-    val longitude: Double,
+    val latitude: Double?,
+    val longitude: Double?,
+    val locality: String,
+    val address: String,
     val status: String,
     @SerializedName("created_at") val createdAt: String,
 )
@@ -44,8 +46,10 @@ interface ParkSmartApi {
     suspend fun createReport(
         @Part("category") category: okhttp3.RequestBody,
         @Part("description") description: okhttp3.RequestBody,
-        @Part("latitude") latitude: okhttp3.RequestBody,
-        @Part("longitude") longitude: okhttp3.RequestBody,
+        @Part("latitude") latitude: okhttp3.RequestBody?,
+        @Part("longitude") longitude: okhttp3.RequestBody?,
+        @Part("locality") locality: okhttp3.RequestBody,
+        @Part("address") address: okhttp3.RequestBody,
         @Part photo: MultipartBody.Part,
     ): ApiReport
 }
@@ -73,18 +77,28 @@ class ParkSmartApiRepository(context: Context) {
     suspend fun loadDashboard(): DashboardData {
         val response = api.dashboard()
         val reports = response.reports.map { report ->
-            ReportSummary(report.category, "${"%.5f".format(report.latitude)}, ${"%.5f".format(report.longitude)}", report.createdAt, ReportStatus.RECEIVED)
+            ReportSummary(report.category, report.locality, report.address, report.createdAt, ReportStatus.RECEIVED)
         }
         return DashboardData(currentUser(), emptyList(), reports, response.totalReports)
     }
 
-    suspend fun sendReport(category: String, description: String, latitude: Double, longitude: Double, photo: File) {
+    suspend fun sendReport(
+        category: String,
+        description: String,
+        latitude: Double?,
+        longitude: Double?,
+        locality: String,
+        address: String,
+        photo: File,
+    ) {
         val multipart = MultipartBody.Part.createFormData("photo", photo.name, photo.asRequestBody("image/jpeg".toMediaType()))
         api.createReport(
             category.toRequestBody("text/plain".toMediaType()),
             description.toRequestBody("text/plain".toMediaType()),
-            latitude.toString().toRequestBody("text/plain".toMediaType()),
-            longitude.toString().toRequestBody("text/plain".toMediaType()),
+            latitude?.toString()?.toRequestBody("text/plain".toMediaType()),
+            longitude?.toString()?.toRequestBody("text/plain".toMediaType()),
+            locality.toRequestBody("text/plain".toMediaType()),
+            address.toRequestBody("text/plain".toMediaType()),
             multipart,
         )
     }

@@ -6,7 +6,7 @@ from app.config import settings
 from app.database import engine
 from app.routes import router
 
-app = FastAPI(title="ParkSmart API", version="0.2.0", description="API REST para cuentas y reportes ciudadanos.")
+app = FastAPI(title="ParkSmart API", version="0.3.0", description="API REST para cuentas y reportes ciudadanos.")
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[origin.strip() for origin in settings.cors_origins.split(",") if origin.strip()],

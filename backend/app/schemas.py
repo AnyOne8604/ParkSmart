@@ -33,8 +33,10 @@ class ReportOut(BaseModel):
     category: str
     description: str
     photo_url: str
-    latitude: float
-    longitude: float
+    latitude: float | None
+    longitude: float | None
+    locality: str
+    address: str
     status: str
     created_at: datetime
 

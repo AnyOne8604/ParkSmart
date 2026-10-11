@@ -1,7 +1,15 @@
+import java.util.Properties
+
 plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.plugin.compose")
 }
+
+val localProperties = Properties().apply {
+    val propertiesFile = rootProject.file("local.properties")
+    if (propertiesFile.exists()) propertiesFile.inputStream().use { load(it) }
+}
+val parksmartApiBaseUrl = localProperties.getProperty("parksmart.apiBaseUrl", "http://10.0.2.2:8000/")
 
 android {
     namespace = "com.parksmart.app"
@@ -11,9 +19,9 @@ android {
         applicationId = "com.parksmart.app"
         minSdk = 26
         targetSdk = 36
-        versionCode = 2
-        versionName = "0.2.0"
-        buildConfigField("String", "API_BASE_URL", "\"http://10.0.2.2:8000/\"")
+        versionCode = 3
+        versionName = "0.3.0"
+        buildConfigField("String", "API_BASE_URL", "\"$parksmartApiBaseUrl\"")
     }
 
     buildFeatures {

@@ -54,14 +54,26 @@ class ParkSmartViewModel(private val repository: ParkSmartApiRepository) : ViewM
         }
     }
 
-    fun createReport(category: String, description: String, latitude: Double?, longitude: Double?, photo: File?) {
-        if (photo == null || latitude == null || longitude == null) {
-            _state.value = _state.value.copy(message = "Selecciona una foto y obtén la ubicación para continuar")
+    fun createReport(
+        category: String,
+        description: String,
+        latitude: Double?,
+        longitude: Double?,
+        locality: String,
+        address: String,
+        photo: File?,
+    ) {
+        if (photo == null || locality.isBlank() || address.isBlank()) {
+            _state.value = _state.value.copy(message = "Agrega una foto, selecciona una localidad y escribe la dirección exacta")
+            return
+        }
+        if ((latitude == null) != (longitude == null)) {
+            _state.value = _state.value.copy(message = "La ubicación GPS está incompleta; vuelve a obtenerla o continúa solo con la dirección")
             return
         }
         viewModelScope.launch {
             _state.value = _state.value.copy(busy = true, message = null)
-            runCatching { repository.sendReport(category, description, latitude, longitude, photo) }
+            runCatching { repository.sendReport(category, description, latitude, longitude, locality, address, photo) }
                 .onSuccess {
                     _state.value = _state.value.copy(busy = false, message = "Reporte enviado correctamente")
                     refreshDashboard()

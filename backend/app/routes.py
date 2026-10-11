@@ -19,6 +19,16 @@ UPLOAD_ROOT = Path(settings.upload_dir).resolve()
 MAX_PHOTO_BYTES = 10 * 1024 * 1024
 ALLOWED_TYPES = {"image/jpeg": ".jpg", "image/png": ".png", "image/webp": ".webp"}
 ALLOWED_CATEGORIES = {"Automóvil", "Motocicleta", "Otro"}
+BOGOTA_LOCALITIES = (
+    "Usaquén", "Chapinero", "Santa Fe", "San Cristóbal", "Usme", "Tunjuelito", "Bosa",
+    "Kennedy", "Fontibón", "Engativá", "Suba", "Barrios Unidos", "Teusaquillo",
+    "Los Mártires", "Antonio Nariño", "Puente Aranda", "La Candelaria",
+    "Rafael Uribe Uribe", "Ciudad Bolívar", "Sumapaz",
+)
+
+
+def canonical_bogota_locality(value: str) -> str | None:
+    return next((item for item in BOGOTA_LOCALITIES if item.casefold() == value.strip().casefold()), None)
 
 
 def auth_response(user: User) -> AuthOut:
@@ -26,14 +36,16 @@ def auth_response(user: User) -> AuthOut:
 
 
 def report_out(report: Report) -> ReportOut:
-    point = to_shape(report.location)
+    point = to_shape(report.location) if report.location is not None else None
     return ReportOut(
         id=report.id,
         category=report.category,
         description=report.description,
         photo_url=f"/api/v1/reports/{report.id}/photo",
-        latitude=point.y,
-        longitude=point.x,
+        latitude=point.y if point else None,
+        longitude=point.x if point else None,
+        locality=report.locality,
+        address=report.address,
         status=report.status,
         created_at=report.created_at,
     )
@@ -68,8 +80,10 @@ def me(user: User = Depends(current_user)) -> User:
 async def create_report(
     category: str = Form(min_length=2, max_length=40),
     description: str = Form(default="", max_length=1000),
-    latitude: float = Form(ge=-90, le=90),
-    longitude: float = Form(ge=-180, le=180),
+    locality: str = Form(min_length=2, max_length=40),
+    address: str = Form(min_length=4, max_length=250),
+    latitude: float | None = Form(default=None, ge=-90, le=90),
+    longitude: float | None = Form(default=None, ge=-180, le=180),
     photo: UploadFile = File(),
     user: User = Depends(current_user),
     db: Session = Depends(get_db),
@@ -80,6 +94,14 @@ async def create_report(
     category = category.strip()
     if category not in ALLOWED_CATEGORIES:
         raise HTTPException(status_code=422, detail="Tipo de vehículo no válido")
+    locality = canonical_bogota_locality(locality)
+    if locality is None:
+        raise HTTPException(status_code=422, detail="Selecciona una localidad válida de Bogotá")
+    address = " ".join(address.split())
+    if len(address) < 4:
+        raise HTTPException(status_code=422, detail="Escribe una dirección más detallada")
+    if (latitude is None) != (longitude is None):
+        raise HTTPException(status_code=422, detail="Envía ambas coordenadas GPS o ninguna")
     contents = await photo.read(MAX_PHOTO_BYTES + 1)
     if not contents or len(contents) > MAX_PHOTO_BYTES:
         raise HTTPException(status_code=413, detail="La foto debe pesar como máximo 10 MB")
@@ -91,7 +113,9 @@ async def create_report(
         category=category,
         description=description.strip(),
         photo_key=key,
-        location=WKTElement(f"POINT({longitude} {latitude})", srid=4326),
+        locality=locality,
+        address=address,
+        location=WKTElement(f"POINT({longitude} {latitude})", srid=4326) if latitude is not None else None,
     )
     db.add(report)
     db.commit()

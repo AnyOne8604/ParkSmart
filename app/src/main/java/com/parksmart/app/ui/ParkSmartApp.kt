@@ -67,6 +67,8 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.NavigationBar
@@ -108,6 +110,7 @@ import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.parksmart.app.R
 import com.parksmart.app.data.CriticalZone
+import com.parksmart.app.data.BOGOTA_LOCALITIES
 import com.parksmart.app.data.DashboardData
 import com.parksmart.app.data.ParkSmartApiRepository
 import com.parksmart.app.data.ReportStatus
@@ -456,7 +459,7 @@ private fun ReportScreen(
     insets: PaddingValues,
     busy: Boolean,
     message: String?,
-    onSubmit: (String, String, Double?, Double?, File?) -> Unit,
+    onSubmit: (String, String, Double?, Double?, String, String, File?) -> Unit,
 ) {
     val context = LocalContext.current
     var selectedPhoto by remember { mutableStateOf<File?>(null) }
@@ -465,6 +468,9 @@ private fun ReportScreen(
     var longitude by remember { mutableStateOf<Double?>(null) }
     var category by rememberSaveable { mutableStateOf("Automóvil") }
     var description by rememberSaveable { mutableStateOf("") }
+    var locality by rememberSaveable { mutableStateOf("") }
+    var address by rememberSaveable { mutableStateOf("") }
+    var localityMenuExpanded by remember { mutableStateOf(false) }
     var captureFile by remember { mutableStateOf<File?>(null) }
 
     fun decodePreview(uri: Uri): Bitmap? {
@@ -515,7 +521,7 @@ private fun ReportScreen(
     }
 
     Column(modifier = Modifier.fillMaxSize().padding(insets).verticalScroll(rememberScrollState()).padding(horizontal = 20.dp)) {
-        ScreenHeading("Nuevo reporte", "Captura de evidencia y ubicación")
+        ScreenHeading("Nuevo reporte", "Agrega evidencia y señala el lugar")
         Spacer(Modifier.height(18.dp))
         Box(
             modifier = Modifier.fillMaxWidth().height(190.dp).clip(RoundedCornerShape(16.dp)).background(Color(0xFFE5EEE9)).clickable {
@@ -558,6 +564,35 @@ private fun ReportScreen(
             Text(if (latitude == null) "Obtener ubicación actual" else "Ubicación capturada")
         }
         latitude?.let { lat -> longitude?.let { lon -> Text("%.5f, %.5f".format(lat, lon), modifier = Modifier.padding(top = 6.dp), color = MutedInk, fontSize = 11.sp) } }
+        Text("El GPS es opcional; también puedes indicar el lugar manualmente.", modifier = Modifier.padding(top = 7.dp), color = MutedInk, fontSize = 11.sp)
+        Spacer(Modifier.height(14.dp))
+        Box {
+            OutlinedButton(onClick = { localityMenuExpanded = true }, modifier = Modifier.fillMaxWidth()) {
+                Icon(Icons.Filled.LocationOn, contentDescription = null)
+                Spacer(Modifier.width(8.dp))
+                Text(locality.ifBlank { "Selecciona localidad" }, modifier = Modifier.weight(1f))
+                Icon(Icons.AutoMirrored.Filled.KeyboardArrowRight, contentDescription = null)
+            }
+            DropdownMenu(expanded = localityMenuExpanded, onDismissRequest = { localityMenuExpanded = false }) {
+                BOGOTA_LOCALITIES.forEach { option ->
+                    DropdownMenuItem(
+                        text = { Text(option) },
+                        onClick = { locality = option; localityMenuExpanded = false },
+                    )
+                }
+            }
+        }
+        Spacer(Modifier.height(10.dp))
+        OutlinedTextField(
+            value = address,
+            onValueChange = { address = it },
+            modifier = Modifier.fillMaxWidth(),
+            label = { Text("Dirección exacta") },
+            placeholder = { Text("Ej. Calle 53 # 10-25") },
+            supportingText = { Text("Escribe una dirección que permita identificar el sitio") },
+            singleLine = true,
+            shape = RoundedCornerShape(12.dp),
+        )
         Spacer(Modifier.height(16.dp))
         SectionLabel("Tipo de vehículo")
         Row(horizontalArrangement = Arrangement.spacedBy(9.dp)) {
@@ -569,7 +604,7 @@ private fun ReportScreen(
         OutlinedTextField(value = description, onValueChange = { description = it }, modifier = Modifier.fillMaxWidth(), label = { Text("Descripción (opcional)") }, minLines = 2, maxLines = 4, shape = RoundedCornerShape(12.dp))
         if (message != null) Text(message, modifier = Modifier.padding(top = 10.dp), color = if (message.contains("correctamente")) ParkGreen else Danger, fontSize = 12.sp)
         Spacer(Modifier.height(20.dp))
-        Button(onClick = { onSubmit(category, description, latitude, longitude, selectedPhoto) }, enabled = !busy, modifier = Modifier.fillMaxWidth().height(50.dp), shape = RoundedCornerShape(12.dp), colors = ButtonDefaults.buttonColors(containerColor = ParkGreen)) {
+        Button(onClick = { onSubmit(category, description, latitude, longitude, locality, address, selectedPhoto) }, enabled = !busy, modifier = Modifier.fillMaxWidth().height(50.dp), shape = RoundedCornerShape(12.dp), colors = ButtonDefaults.buttonColors(containerColor = ParkGreen)) {
             Text(if (busy) "Enviando…" else "Enviar reporte")
         }
         Spacer(Modifier.height(20.dp))
@@ -781,7 +816,8 @@ private fun ReportRow(report: ReportSummary, compact: Boolean = false) {
         Spacer(Modifier.width(11.dp))
         Column(Modifier.weight(1f)) {
             Text(report.title, color = Ink, fontSize = 12.sp, fontWeight = FontWeight.SemiBold, maxLines = 1)
-            Text(report.location, color = MutedInk, fontSize = 10.sp, maxLines = 1)
+            Text(report.locality, color = MutedInk, fontSize = 10.sp, maxLines = 1)
+            Text(report.address, color = MutedInk, fontSize = 10.sp, maxLines = 1)
             if (!compact) Text(report.dateLabel, color = MutedInk, fontSize = 10.sp)
         }
         if (!compact) {
