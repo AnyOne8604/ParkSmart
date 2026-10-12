@@ -37,7 +37,7 @@ async def lifespan(_: FastAPI):
     yield
 
 
-app = FastAPI(title="ParkSmart API", version="0.6.1", description="API REST de reportes geoespaciales ciudadanos ParkSmart.", lifespan=lifespan)
+app = FastAPI(title="ParkSmart API", version="0.7.0", description="API REST de reportes geoespaciales ciudadanos ParkSmart.", lifespan=lifespan)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[origin.strip() for origin in settings.cors_origins.split(",") if origin.strip()],

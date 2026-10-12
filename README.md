@@ -1,6 +1,6 @@
 # ParkSmart
 
-Aplicación Android para reportar situaciones de estacionamiento indebido. La versión `v0.6.1` mejora la evaluación independiente del asistente de categorías y agrega comparaciones de tendencias en ventanas de 7 y 30 días.
+Aplicación Android para reportar situaciones de estacionamiento indebido. La versión `v0.7.0` pule el acceso y la navegación, mejora el perfil y corrige la orientación de las fotografías.
 
 ## Requisitos
 
@@ -68,7 +68,7 @@ ParkSmart/
 `-- README.md
 ```
 
-## Funcionalidades de v0.6.1
+## Funcionalidades de v0.7.0
 
 - Registro manual e inicio de sesión por correo y contraseña.
 - Contraseñas con Argon2 y sesión JWT guardada localmente en Android.
@@ -100,6 +100,12 @@ ParkSmart/
 - El panel diferencia que un modelo pueda generar sugerencias de que la evaluación ya tenga datos suficientes. Solo presenta puntuaciones cuando existen al menos 15 reportes de evaluación y 3 ejemplos confirmados por categoría; hasta entonces muestra tamaños y oculta puntuaciones.
 - Estadísticas compara ventanas móviles de los últimos 7 días con los 7 anteriores, y los últimos 30 con los 30 anteriores, mostrando conteos y variación porcentual cuando existe un periodo previo no vacío.
 - La clasificación no examina fotos ni usa un servicio externo; no cambia categorías ni decisiones automáticamente. La categoría inicial se conserva como línea base y la categoría revisada como referencia humana.
+- Inicio de sesión y registro usan una imagen de fondo de Bogotá, con el formulario sobre la transición clara, el eslogan bajo el enlace de acceso/registro y los campos desplazados hacia la zona blanca.
+- El avatar de la pantalla Inicio abre Perfil. Información personal muestra nombre, correo de la cuenta y el total de reportes.
+- Los controles de cámara, galería, ubicación y localidad usan el verde tenue de la interfaz; los selectores de vehículo y el envío mantienen sus estilos destacados.
+- Los tipos de vehículo Motocicleta y Otro tienen iconos específicos de moto y bus.
+- Las imágenes de cámara y galería se normalizan según su orientación EXIF antes de guardarse y enviarse. El panel administrativo también corrige la orientación EXIF al mostrar las fotos existentes.
+- El icono adaptativo aplica márgenes de seguridad al logo para evitar que el recorte circular del launcher corte sus elementos.
 
 La cuenta administrativa se configura mediante `ADMIN_NAME`, `ADMIN_EMAIL` y `ADMIN_PASSWORD` en `.env`. El valor de demostración debe reemplazarse antes de compartir o desplegar el sistema; no se debe reutilizar en producción.
 
@@ -160,6 +166,9 @@ La geocodificación de direcciones manuales se evaluó y no se activa en v0.4: l
 
 - **HTTP 500 al agrupar la tendencia diaria en PostgreSQL:** SQLAlchemy compiló la zona horaria con parámetros distintos en `SELECT` y `GROUP BY`. Se reemplazó esa expresión por SQL PostgreSQL explícito con `AT TIME ZONE 'America/Bogota'`, conversión a fecha y agrupación por alias. La ruta volvió a responder con una serie de 30 días.
 - **`Unable to establish loopback connection` en Gradle (también al verificar v0.6.1):** Gradle falla antes de compilar Kotlin, por lo que no confirma ni descarta errores del código Android. No quedó resuelto. Cierra Android Studio, termina procesos Gradle/JDK atascados, vuelve a abrir el proyecto y prueba Sync y `:app:compileDebugKotlin`; si persiste, revisa firewall/antivirus y permisos de loopback para Java/Gradle, y consulta el log de Gradle para identificar el proceso bloqueado.
+- **Fotos giradas de lado:** la cámara y la galería podían proporcionar píxeles sin rotar y guardar el giro solo en EXIF. Android ahora aplica la transformación EXIF a los píxeles y genera un JPEG normalizado antes de subirlo; Administración aplica la misma corrección a imágenes anteriores.
+- **Logo del launcher recortado:** el icono adaptativo mostraba el logo casi a tamaño completo, fuera de la zona segura del recorte del sistema. Se añadió un margen interior y un fondo blanco para que el logo completo quede visible.
+- **`maxHeight` con receptor implícito en `LoginScreen`:** dentro del contenido de `Column`, Kotlin resolvía el receptor implícito incorrecto. Se captura `maxHeight` como `availableHeight` en `BoxWithConstraints` antes de crear la columna y se usa esa variable para calcular el espacio superior.
 
   ```properties
   parksmart.apiBaseUrl=http://192.168.1.20:8000/
@@ -171,8 +180,8 @@ La geocodificación de direcciones manuales se evaluó y no se activa en v0.4: l
 
 La hoja de ruta recomendada para las siguientes versiones es:
 
-1. **v0.7 - Validación externa:** ampliar el conjunto revisado por personas expertas, contrastar con una línea base humana independiente y revisar desempeño por localidad y periodo. Evaluar estacionalidad solo cuando haya historia suficiente y cobertura documentada.
-2. **v0.8 - Confianza y gestión:** verificación de correo y recuperación de contraseña; auditoría de moderación, reclamos, consentimiento versionado y retención/eliminación automática de fotos.
+1. **v0.8 - Calidad analítica:** ampliar la evaluación independiente del clasificador con etiquetas humanas suficientes, comparar su desempeño contra una línea base humana y revisar resultados por localidad y periodo. Evaluar estacionalidad solo con datos históricos y cobertura confiables.
+2. **v0.9 - Confianza y gestión:** verificación de correo y recuperación de contraseña; auditoría de moderación, reclamos, consentimiento versionado y retención/eliminación automática de fotos.
 3. **v1.0 - Preparación para uso real:** desplegar API y base de datos en infraestructura administrada; HTTPS/TLS, secretos gestionados, límites antiabuso, copias de seguridad, monitoreo, CI/CD, pruebas de seguridad y publicación Android.
 
 Antes de un uso público, deben definirse el responsable y canal de atención, registrar la aceptación de una versión de la política y automatizar la retención de fotos. La política visible de v0.5 es informativa y todavía no captura esa constancia.

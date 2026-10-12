@@ -9,6 +9,7 @@ val BOGOTA_LOCALITIES = listOf(
 
 data class ParkSmartUser(
     val fullName: String,
+    val email: String,
     val role: String,
     val initials: String,
 )

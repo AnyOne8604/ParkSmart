@@ -19,6 +19,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
@@ -52,6 +53,7 @@ import androidx.compose.material.icons.filled.AccountCircle
 import androidx.compose.material.icons.filled.BarChart
 import androidx.compose.material.icons.filled.CameraAlt
 import androidx.compose.material.icons.filled.DirectionsCar
+import androidx.compose.material.icons.filled.DirectionsBus
 import androidx.compose.material.icons.filled.Email
 import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.filled.Lock
@@ -64,6 +66,7 @@ import androidx.compose.material.icons.filled.Place
 import androidx.compose.material.icons.filled.ReportProblem
 import androidx.compose.material.icons.filled.Visibility
 import androidx.compose.material.icons.filled.VisibilityOff
+import androidx.compose.material.icons.filled.TwoWheeler
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
@@ -99,6 +102,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
@@ -118,6 +122,8 @@ import com.parksmart.app.BuildConfig
 import com.parksmart.app.data.CriticalZone
 import com.parksmart.app.data.AdminReport
 import com.parksmart.app.data.BOGOTA_LOCALITIES
+import com.parksmart.app.data.readPhotoOrientation
+import com.parksmart.app.data.withExifOrientation
 import com.parksmart.app.data.DashboardData
 import com.parksmart.app.data.ParkSmartApiRepository
 import com.parksmart.app.data.MapData
@@ -163,7 +169,7 @@ import org.maplibre.android.style.expressions.Expression
 import org.maplibre.android.module.http.HttpRequestUtil
 
 private enum class AppRoute {
-    LOGIN, HOME, REPORT, MAP, PROFILE, REPORTS, STATISTICS, ADMIN, PRIVACY
+    LOGIN, HOME, REPORT, MAP, PROFILE, PERSONAL_INFO, REPORTS, STATISTICS, ADMIN, PRIVACY
 }
 
 private data class MainTab(
@@ -187,7 +193,7 @@ fun ParkSmartApp() {
     val state by model.state.collectAsState()
     var routeName by rememberSaveable { mutableStateOf(AppRoute.LOGIN.name) }
     val route = AppRoute.valueOf(routeName)
-    val dashboard = state.dashboard ?: DashboardData(state.user ?: com.parksmart.app.data.ParkSmartUser("Ciudadano", "Ciudadano", "PS"), emptyList(), emptyList(), 0)
+    val dashboard = state.dashboard ?: DashboardData(state.user ?: com.parksmart.app.data.ParkSmartUser("Ciudadano", "", "Ciudadano", "PS"), emptyList(), emptyList(), 0)
     LaunchedEffect(state.user) {
         if (state.user != null) routeName = AppRoute.HOME.name
     }
@@ -209,6 +215,7 @@ fun ParkSmartApp() {
         AppRoute.REPORT -> AppRoute.REPORT
         AppRoute.MAP -> AppRoute.MAP
         AppRoute.PROFILE -> AppRoute.PROFILE
+        AppRoute.PERSONAL_INFO -> AppRoute.PROFILE
         AppRoute.PRIVACY -> AppRoute.PROFILE
             else -> AppRoute.HOME
     }
@@ -251,7 +258,8 @@ fun ParkSmartApp() {
             AppRoute.MAP -> MapScreen(state.mapData, state.mapLoading, state.mapError, insets) { latitude, longitude, category, status, days, refreshZones ->
                 model.refreshMap(latitude, longitude, category, status, days, refreshZones)
             }
-            AppRoute.PROFILE -> ProfileScreen(dashboard, insets, onPrivacy = { routeName = AppRoute.PRIVACY.name }, onSignOut = { model.signOut(); routeName = AppRoute.LOGIN.name })
+            AppRoute.PROFILE -> ProfileScreen(dashboard, insets, onPersonalInfo = { routeName = AppRoute.PERSONAL_INFO.name }, onPrivacy = { routeName = AppRoute.PRIVACY.name }, onSignOut = { model.signOut(); routeName = AppRoute.LOGIN.name })
+            AppRoute.PERSONAL_INFO -> PersonalInformationScreen(dashboard, insets, onBack = { routeName = AppRoute.PROFILE.name })
             AppRoute.REPORTS -> ReportsScreen(dashboard, insets, onBack = { routeName = AppRoute.HOME.name })
             AppRoute.STATISTICS -> StatisticsScreen(dashboard, insets, onBack = { routeName = AppRoute.HOME.name })
             AppRoute.ADMIN -> AdminReportsScreen(state.adminReports, state.classificationMetrics, state.adminLoading, state.adminError, insets, model::moderateReport, model::reviewReportCategory, model::requestClassificationSuggestion, model::loadAdminPhoto, onBack = { routeName = AppRoute.HOME.name })
@@ -274,31 +282,32 @@ private fun LoginScreen(
     var password by rememberSaveable { mutableStateOf("") }
     var passwordVisible by rememberSaveable { mutableStateOf(false) }
 
-    Column(
-        modifier = Modifier
-            .fillMaxSize()
-            .background(Color.White)
-            .verticalScroll(rememberScrollState())
-            .imePadding()
-            .padding(horizontal = 28.dp)
-            .padding(top = 20.dp, bottom = 22.dp),
-        horizontalAlignment = Alignment.CenterHorizontally,
-    ) {
-        Spacer(Modifier.height(12.dp))
-        androidx.compose.foundation.Image(
+    BoxWithConstraints(Modifier.fillMaxSize()) {
+        Image(
+            painter = painterResource(R.drawable.login_background),
+            contentDescription = null,
+            modifier = Modifier.fillMaxSize(),
+            contentScale = ContentScale.Crop,
+        )
+        val availableHeight = maxHeight
+        val contentHeight = if (registering) 590.dp else 520.dp
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .verticalScroll(rememberScrollState())
+                .imePadding()
+                .padding(horizontal = 28.dp)
+                .padding(bottom = 22.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
+        ) {
+        Spacer(Modifier.height(((availableHeight - contentHeight) / 2).coerceAtLeast(18.dp)))
+        Image(
             painter = painterResource(R.drawable.parksmart_logo),
             contentDescription = "ParkSmart: reporta hoy, una Bogotá mejor mañana",
-            modifier = Modifier
-                .fillMaxWidth(0.75f)
-                .height(166.dp),
+            modifier = Modifier.fillMaxWidth(0.68f).height(140.dp),
+            contentScale = ContentScale.Fit,
         )
-        Text(
-            text = "Juntos por una movilidad más inteligente",
-            color = MutedInk,
-            fontSize = 14.sp,
-            lineHeight = 20.sp,
-        )
-        Spacer(Modifier.height(24.dp))
+        Spacer(Modifier.height(88.dp))
         if (registering) {
             OutlinedTextField(
                 value = name,
@@ -364,6 +373,15 @@ private fun LoginScreen(
             Text(if (registering) "¿Ya tienes cuenta?" else "¿No tienes una cuenta?", color = MutedInk, fontSize = 13.sp)
             Text(if (registering) "  Inicia sesión" else "  Regístrate", modifier = Modifier.clickable { registering = !registering }, color = ParkGreen, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
         }
+        Spacer(Modifier.height(10.dp))
+        Text(
+            text = "Juntos por una movilidad más inteligente",
+            color = MutedInk,
+            fontSize = 14.sp,
+            lineHeight = 20.sp,
+        )
+        Spacer(Modifier.height(18.dp))
+        }
     }
 }
 
@@ -373,6 +391,8 @@ private fun LoginFieldColors() = OutlinedTextFieldDefaults.colors(
     unfocusedBorderColor = Line,
     focusedLabelColor = ParkGreen,
     cursorColor = ParkGreen,
+    unfocusedContainerColor = Color.White.copy(alpha = 0.9f),
+    focusedContainerColor = Color.White.copy(alpha = 0.96f),
 )
 
 @Composable
@@ -393,14 +413,13 @@ private fun HomeScreen(data: DashboardData, insets: PaddingValues, isAdmin: Bool
                 if (isAdmin) Text("Administrador", color = ParkGreen, fontSize = 11.sp, fontWeight = FontWeight.SemiBold)
                 Text("Juntos por una mejor movilidad", color = MutedInk, fontSize = 12.sp)
             }
-            Box(
-                modifier = Modifier
-                    .size(42.dp)
-                    .clip(CircleShape)
-                    .background(ParkGreen),
-                contentAlignment = Alignment.Center,
-            ) {
-                Text(data.user.initials, color = Color.White, fontWeight = FontWeight.Bold, fontSize = 13.sp)
+            IconButton(onClick = { onNavigate(AppRoute.PROFILE) }, modifier = Modifier.size(48.dp)) {
+                Box(
+                    modifier = Modifier.size(42.dp).clip(CircleShape).background(ParkGreen),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Text(data.user.initials, color = Color.White, fontWeight = FontWeight.Bold, fontSize = 13.sp)
+                }
             }
         }
         Spacer(Modifier.height(20.dp))
@@ -454,7 +473,12 @@ private fun HomeScreen(data: DashboardData, insets: PaddingValues, isAdmin: Bool
             ZoneRow(zone)
             if (index != minOf(data.analytics.localitiesToday.lastIndex, 2)) Spacer(Modifier.height(8.dp))
         }
-        OutlinedButton(onClick = { onNavigate(AppRoute.STATISTICS) }, modifier = Modifier.fillMaxWidth().padding(top = 8.dp), shape = RoundedCornerShape(8.dp)) { Text("Ver más") }
+        OutlinedButton(
+            onClick = { onNavigate(AppRoute.STATISTICS) },
+            modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
+            shape = RoundedCornerShape(8.dp),
+            colors = ButtonDefaults.outlinedButtonColors(containerColor = ParkGreenLight),
+        ) { Text("Ver más") }
         Spacer(Modifier.height(20.dp))
         Text("Actividad reciente", color = Ink, fontSize = 17.sp, fontWeight = FontWeight.Bold)
         Spacer(Modifier.height(10.dp))
@@ -528,12 +552,16 @@ private fun ReportScreen(
     var captureFile by remember { mutableStateOf<File?>(null) }
 
     fun decodePreview(uri: Uri): Bitmap? {
+        val orientation = context.contentResolver.openInputStream(uri)?.use(::readPhotoOrientation)
+            ?: android.media.ExifInterface.ORIENTATION_NORMAL
         val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
         context.contentResolver.openInputStream(uri)?.use { BitmapFactory.decodeStream(it, null, bounds) }
+        if (bounds.outWidth <= 0 || bounds.outHeight <= 0) return null
         var sampleSize = 1
         while (maxOf(bounds.outWidth, bounds.outHeight) / sampleSize > 1600) sampleSize *= 2
         val options = BitmapFactory.Options().apply { inSampleSize = sampleSize }
-        return context.contentResolver.openInputStream(uri)?.use { BitmapFactory.decodeStream(it, null, options) }
+        val bitmap = context.contentResolver.openInputStream(uri)?.use { BitmapFactory.decodeStream(it, null, options) } ?: return null
+        return bitmap.withExifOrientation(orientation)
     }
 
     fun saveJpeg(uri: Uri) {
@@ -557,10 +585,7 @@ private fun ReportScreen(
     }
 
     val takePicture = rememberLauncherForActivityResult(ActivityResultContracts.TakePicture()) { saved ->
-        if (saved) captureFile?.let { file ->
-            selectedPhoto = file
-            preview = decodePreview(Uri.fromFile(file))
-        }
+        if (saved) captureFile?.let { file -> saveJpeg(Uri.fromFile(file)) }
     }
     val cameraPermission = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
         if (granted) {
@@ -595,6 +620,7 @@ private fun ReportScreen(
             }
         }
         Spacer(Modifier.height(9.dp))
+        val actionButtonColors = ButtonDefaults.outlinedButtonColors(containerColor = ParkGreenLight)
         Row(horizontalArrangement = Arrangement.spacedBy(10.dp), modifier = Modifier.fillMaxWidth()) {
             OutlinedButton(onClick = {
                 if (ContextCompat.checkSelfPermission(context, Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED) {
@@ -602,8 +628,8 @@ private fun ReportScreen(
                     captureFile = file
                     takePicture.launch(FileProvider.getUriForFile(context, "${context.packageName}.fileprovider", file))
                 } else cameraPermission.launch(Manifest.permission.CAMERA)
-            }, modifier = Modifier.weight(1f)) { Text("Tomar foto") }
-            OutlinedButton(onClick = { gallery.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)) }, modifier = Modifier.weight(1f)) { Text("Elegir de galería") }
+            }, modifier = Modifier.weight(1f), colors = actionButtonColors) { Text("Tomar foto") }
+            OutlinedButton(onClick = { gallery.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)) }, modifier = Modifier.weight(1f), colors = actionButtonColors) { Text("Elegir de galería") }
         }
         Spacer(Modifier.height(16.dp))
         SectionLabel("Ubicación del reporte")
@@ -612,7 +638,7 @@ private fun ReportScreen(
             val coarse = ContextCompat.checkSelfPermission(context, Manifest.permission.ACCESS_COARSE_LOCATION) == PackageManager.PERMISSION_GRANTED
             if (fine || coarse) requestCurrentLocation()
             else locationPermission.launch(arrayOf(Manifest.permission.ACCESS_FINE_LOCATION, Manifest.permission.ACCESS_COARSE_LOCATION))
-        }, modifier = Modifier.fillMaxWidth()) {
+        }, modifier = Modifier.fillMaxWidth(), colors = actionButtonColors) {
             Icon(Icons.Filled.MyLocation, contentDescription = null)
             Spacer(Modifier.width(8.dp))
             Text(if (latitude == null) "Obtener ubicación actual" else "Ubicación capturada")
@@ -621,7 +647,7 @@ private fun ReportScreen(
         Text("El GPS es opcional; también puedes indicar el lugar manualmente.", modifier = Modifier.padding(top = 7.dp), color = MutedInk, fontSize = 11.sp)
         Spacer(Modifier.height(14.dp))
         Box {
-            OutlinedButton(onClick = { localityMenuExpanded = true }, modifier = Modifier.fillMaxWidth()) {
+            OutlinedButton(onClick = { localityMenuExpanded = true }, modifier = Modifier.fillMaxWidth(), colors = actionButtonColors) {
                 Icon(Icons.Filled.LocationOn, contentDescription = null)
                 Spacer(Modifier.width(8.dp))
                 Text(locality.ifBlank { "Selecciona localidad" }, modifier = Modifier.weight(1f))
@@ -651,7 +677,12 @@ private fun ReportScreen(
         SectionLabel("Tipo de vehículo")
         Row(horizontalArrangement = Arrangement.spacedBy(9.dp)) {
             listOf("Automóvil", "Motocicleta", "Otro").forEach { type ->
-                VehicleChoice(type, if (type == "Otro") Icons.Filled.ReportProblem else Icons.Filled.DirectionsCar, Modifier.weight(1f), selected = category == type) { category = type }
+                val icon = when (type) {
+                    "Motocicleta" -> Icons.Filled.TwoWheeler
+                    "Otro" -> Icons.Filled.DirectionsBus
+                    else -> Icons.Filled.DirectionsCar
+                }
+                VehicleChoice(type, icon, Modifier.weight(1f), selected = category == type) { category = type }
             }
         }
         Spacer(Modifier.height(15.dp))
@@ -929,7 +960,7 @@ private const val OSM_RASTER_STYLE = """
 """
 
 @Composable
-private fun ProfileScreen(data: DashboardData, insets: PaddingValues, onPrivacy: () -> Unit, onSignOut: () -> Unit) {
+private fun ProfileScreen(data: DashboardData, insets: PaddingValues, onPersonalInfo: () -> Unit, onPrivacy: () -> Unit, onSignOut: () -> Unit) {
     Column(
         modifier = Modifier.fillMaxSize().padding(insets).verticalScroll(rememberScrollState()).padding(horizontal = 20.dp),
     ) {
@@ -949,8 +980,7 @@ private fun ProfileScreen(data: DashboardData, insets: PaddingValues, onPrivacy:
             }
         }
         Spacer(Modifier.height(18.dp))
-        Spacer(Modifier.height(16.dp))
-        ProfileItem(Icons.Filled.AccountCircle, "Información personal") {}
+        ProfileItem(Icons.Filled.AccountCircle, "Información personal", onPersonalInfo)
         ProfileItem(Icons.Filled.Lock, "Políticas de privacidad", onPrivacy)
         ProfileItem(Icons.AutoMirrored.Filled.HelpOutline, "Ayuda y soporte") {}
         Spacer(Modifier.height(10.dp))
@@ -966,6 +996,30 @@ private fun ProfileScreen(data: DashboardData, insets: PaddingValues, onPrivacy:
             Text("Cerrar sesión")
         }
         Spacer(Modifier.height(24.dp))
+    }
+}
+
+@Composable
+private fun PersonalInformationScreen(data: DashboardData, insets: PaddingValues, onBack: () -> Unit) {
+    Column(
+        modifier = Modifier.fillMaxSize().padding(insets).verticalScroll(rememberScrollState()).padding(horizontal = 20.dp),
+    ) {
+        BackHeading("Información personal", onBack)
+        Spacer(Modifier.height(10.dp))
+        PersonalInfoRow("Nombre completo", data.user.fullName)
+        PersonalInfoRow("Correo registrado", data.user.email.ifBlank { "No disponible" })
+        PersonalInfoRow("Reportes realizados", data.totalReports.toString())
+    }
+}
+
+@Composable
+private fun PersonalInfoRow(label: String, value: String) {
+    Column(
+        Modifier.fillMaxWidth().padding(vertical = 4.dp).clip(RoundedCornerShape(10.dp)).background(Color.White).padding(15.dp),
+        verticalArrangement = Arrangement.spacedBy(4.dp),
+    ) {
+        Text(label, color = MutedInk, fontSize = 11.sp)
+        Text(value, color = Ink, fontSize = 15.sp, fontWeight = FontWeight.SemiBold)
     }
 }
 

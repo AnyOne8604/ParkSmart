@@ -24,6 +24,7 @@ import okhttp3.ResponseBody
 import com.google.gson.annotations.SerializedName
 import com.parksmart.app.data.ReportStatus
 import java.io.File
+import java.io.ByteArrayInputStream
 
 data class AuthRequest(val email: String, val password: String)
 data class RegisterRequest(val name: String, val email: String, val password: String)
@@ -221,7 +222,9 @@ class ParkSmartApiRepository(context: Context) {
 
     suspend fun loadAdminPhoto(reportId: String): Bitmap? {
         val bytes = api.adminReportPhoto(reportId).bytes()
-        return BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
+        val bitmap = BitmapFactory.decodeByteArray(bytes, 0, bytes.size) ?: return null
+        val orientation = ByteArrayInputStream(bytes).use(::readPhotoOrientation)
+        return bitmap.withExifOrientation(orientation)
     }
 
     suspend fun loadNearbyMapReports(latitude: Double, longitude: Double, category: String?, status: String?, sinceDays: Int?): List<MapReport> =
@@ -269,9 +272,10 @@ class ParkSmartApiRepository(context: Context) {
 
     private fun currentUser(): ParkSmartUser {
         val name = preferences.getString("name", "Usuario ParkSmart") ?: "Usuario ParkSmart"
+        val email = preferences.getString("email", "") ?: ""
         val initials = name.trim().split(Regex("\\s+")).take(2).mapNotNull { it.firstOrNull()?.uppercase() }.joinToString("")
         val role = preferences.getString("role", "citizen") ?: "citizen"
-        return ParkSmartUser(name, role, initials.ifBlank { "PS" })
+        return ParkSmartUser(name, email, role, initials.ifBlank { "PS" })
     }
 
     private fun ApiAdminReport.toAdminReport() = com.parksmart.app.data.AdminReport(
