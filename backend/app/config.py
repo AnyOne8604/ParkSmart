@@ -7,6 +7,9 @@ class Settings(BaseSettings):
     jwt_expiration_minutes: int = 60 * 24
     upload_dir: str = "./uploads"
     cors_origins: str = "http://localhost:8000"
+    admin_name: str = "Carlos Ramírez"
+    admin_email: str = "movilidad@gmail.com"
+    admin_password: str = ""
 
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 

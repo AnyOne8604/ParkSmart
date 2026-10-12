@@ -4,6 +4,7 @@ import android.Manifest
 import android.content.pm.PackageManager
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
+import android.content.Intent
 import android.net.Uri
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.PickVisualMediaRequest
@@ -31,6 +32,8 @@ import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -54,7 +57,6 @@ import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.LocationOn
 import androidx.compose.material.icons.filled.Map
 import androidx.compose.material.icons.filled.MyLocation
-import androidx.compose.material.icons.filled.NotificationsNone
 import androidx.compose.material.icons.filled.Person
 import androidx.compose.material.icons.filled.PhotoCamera
 import androidx.compose.material.icons.filled.Place
@@ -85,6 +87,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
+import androidx.compose.runtime.produceState
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.platform.LocalContext
@@ -112,6 +115,7 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import com.parksmart.app.R
 import com.parksmart.app.BuildConfig
 import com.parksmart.app.data.CriticalZone
+import com.parksmart.app.data.AdminReport
 import com.parksmart.app.data.BOGOTA_LOCALITIES
 import com.parksmart.app.data.DashboardData
 import com.parksmart.app.data.ParkSmartApiRepository
@@ -158,7 +162,7 @@ import org.maplibre.android.style.expressions.Expression
 import org.maplibre.android.module.http.HttpRequestUtil
 
 private enum class AppRoute {
-    LOGIN, HOME, REPORT, MAP, PROFILE, REPORTS, STATISTICS
+    LOGIN, HOME, REPORT, MAP, PROFILE, REPORTS, STATISTICS, ADMIN, PRIVACY
 }
 
 private data class MainTab(
@@ -186,6 +190,9 @@ fun ParkSmartApp() {
     LaunchedEffect(state.user) {
         if (state.user != null) routeName = AppRoute.HOME.name
     }
+    LaunchedEffect(routeName) {
+        if (routeName == AppRoute.ADMIN.name && state.user?.role == "admin") model.loadAdminReports()
+    }
 
     if (route == AppRoute.LOGIN) {
         LoginScreen(
@@ -201,7 +208,8 @@ fun ParkSmartApp() {
         AppRoute.REPORT -> AppRoute.REPORT
         AppRoute.MAP -> AppRoute.MAP
         AppRoute.PROFILE -> AppRoute.PROFILE
-        else -> AppRoute.HOME
+        AppRoute.PRIVACY -> AppRoute.PROFILE
+            else -> AppRoute.HOME
     }
     val tabs = listOf(
         MainTab(AppRoute.HOME, "Inicio", Icons.Filled.Home),
@@ -237,14 +245,16 @@ fun ParkSmartApp() {
         },
     ) { insets ->
         when (route) {
-            AppRoute.HOME -> HomeScreen(dashboard, insets, onNavigate = { routeName = it.name })
+            AppRoute.HOME -> HomeScreen(dashboard, insets, isAdmin = state.user?.role == "admin", onNavigate = { routeName = it.name })
             AppRoute.REPORT -> ReportScreen(insets, state.busy, state.message, model::createReport)
             AppRoute.MAP -> MapScreen(state.mapData, state.mapLoading, state.mapError, insets) { latitude, longitude, category, status, days, refreshZones ->
                 model.refreshMap(latitude, longitude, category, status, days, refreshZones)
             }
-            AppRoute.PROFILE -> ProfileScreen(dashboard, insets, onSignOut = { model.signOut(); routeName = AppRoute.LOGIN.name })
+            AppRoute.PROFILE -> ProfileScreen(dashboard, insets, onPrivacy = { routeName = AppRoute.PRIVACY.name }, onSignOut = { model.signOut(); routeName = AppRoute.LOGIN.name })
             AppRoute.REPORTS -> ReportsScreen(dashboard, insets, onBack = { routeName = AppRoute.HOME.name })
             AppRoute.STATISTICS -> StatisticsScreen(dashboard, insets, onBack = { routeName = AppRoute.HOME.name })
+            AppRoute.ADMIN -> AdminReportsScreen(state.adminReports, state.adminLoading, state.adminError, insets, model::moderateReport, model::loadAdminPhoto, onBack = { routeName = AppRoute.HOME.name })
+            AppRoute.PRIVACY -> PrivacyPolicyScreen(insets, onBack = { routeName = AppRoute.PROFILE.name })
             AppRoute.LOGIN -> Unit
         }
     }
@@ -365,7 +375,7 @@ private fun LoginFieldColors() = OutlinedTextFieldDefaults.colors(
 )
 
 @Composable
-private fun HomeScreen(data: DashboardData, insets: PaddingValues, onNavigate: (AppRoute) -> Unit) {
+private fun HomeScreen(data: DashboardData, insets: PaddingValues, isAdmin: Boolean, onNavigate: (AppRoute) -> Unit) {
     Column(
         modifier = Modifier
             .fillMaxSize()
@@ -379,6 +389,7 @@ private fun HomeScreen(data: DashboardData, insets: PaddingValues, onNavigate: (
                 Text("Hola,", color = MutedInk, fontSize = 14.sp)
                 Spacer(Modifier.height(2.dp))
                 Text(data.user.fullName, color = Ink, fontSize = 22.sp, fontWeight = FontWeight.Bold)
+                if (isAdmin) Text("Administrador", color = ParkGreen, fontSize = 11.sp, fontWeight = FontWeight.SemiBold)
                 Text("Juntos por una mejor movilidad", color = MutedInk, fontSize = 12.sp)
             }
             Box(
@@ -416,6 +427,19 @@ private fun HomeScreen(data: DashboardData, insets: PaddingValues, onNavigate: (
             QuickAction("Mis reportes", Icons.AutoMirrored.Filled.Assignment, Modifier.weight(1f)) { onNavigate(AppRoute.REPORTS) }
             QuickAction("Mapa", Icons.Filled.LocationOn, Modifier.weight(1f)) { onNavigate(AppRoute.MAP) }
             QuickAction("Estadísticas", Icons.Filled.BarChart, Modifier.weight(1f)) { onNavigate(AppRoute.STATISTICS) }
+        }
+        if (isAdmin) {
+            Spacer(Modifier.height(12.dp))
+            Button(
+                onClick = { onNavigate(AppRoute.ADMIN) },
+                modifier = Modifier.fillMaxWidth().height(50.dp),
+                shape = RoundedCornerShape(10.dp),
+                colors = ButtonDefaults.buttonColors(containerColor = Ink),
+            ) {
+                Icon(Icons.Filled.Lock, contentDescription = null, modifier = Modifier.size(18.dp))
+                Spacer(Modifier.width(8.dp))
+                Text("Control administrativo")
+            }
         }
         Spacer(Modifier.height(22.dp))
         Row(verticalAlignment = Alignment.CenterVertically) {
@@ -682,7 +706,7 @@ private fun MapScreen(
         ScreenHeading("Mapa de reportes", "Reportes con ubicación GPS · Bogotá")
         Row(horizontalArrangement = Arrangement.spacedBy(6.dp), modifier = Modifier.fillMaxWidth()) {
             MapFilter(label = category, options = listOf("Todas", "Automóvil", "Motocicleta", "Otro"), onSelect = { category = it }, modifier = Modifier.weight(1.1f))
-            MapFilter(label = status, options = listOf("Todos", "Recibido", "En revisión", "Cerrado"), onSelect = { status = it }, modifier = Modifier.weight(1.1f))
+            MapFilter(label = status, options = listOf("Todos", "Recibido", "Aprobado", "Negado", "En revisión", "Cerrado"), onSelect = { status = it }, modifier = Modifier.weight(1.1f))
             MapFilter(label = period, options = listOf("7 días", "30 días", "90 días", "Todo"), onSelect = { period = it }, modifier = Modifier.weight(0.8f))
         }
         Spacer(Modifier.height(10.dp))
@@ -749,6 +773,8 @@ private fun MapScreen(
 
 private fun String.toStatusCode(): String? = when (this) {
     "Recibido" -> "received"
+    "Aprobado" -> "approved"
+    "Negado" -> "rejected"
     "En revisión" -> "in_review"
     "Cerrado" -> "closed"
     else -> null
@@ -756,6 +782,8 @@ private fun String.toStatusCode(): String? = when (this) {
 
 private fun String.toStatusLabel(): String = when (this) {
     "received" -> "Recibido"
+    "approved" -> "Aprobado"
+    "rejected" -> "Negado"
     "in_review" -> "En revisión"
     "closed" -> "Cerrado"
     else -> this
@@ -899,7 +927,7 @@ private const val OSM_RASTER_STYLE = """
 """
 
 @Composable
-private fun ProfileScreen(data: DashboardData, insets: PaddingValues, onSignOut: () -> Unit) {
+private fun ProfileScreen(data: DashboardData, insets: PaddingValues, onPrivacy: () -> Unit, onSignOut: () -> Unit) {
     Column(
         modifier = Modifier.fillMaxSize().padding(insets).verticalScroll(rememberScrollState()).padding(horizontal = 20.dp),
     ) {
@@ -914,15 +942,15 @@ private fun ProfileScreen(data: DashboardData, insets: PaddingValues, onSignOut:
             Spacer(Modifier.width(14.dp))
             Column {
                 Text(data.user.fullName, color = Ink, fontSize = 16.sp, fontWeight = FontWeight.Bold)
-                Text(data.user.role, color = MutedInk, fontSize = 12.sp)
+                Text(if (data.user.role == "admin") "Administrador" else "Ciudadano", color = MutedInk, fontSize = 12.sp)
                 Text("Cuenta ParkSmart", color = ParkGreen, fontSize = 11.sp, fontWeight = FontWeight.Medium)
             }
         }
         Spacer(Modifier.height(18.dp))
         Spacer(Modifier.height(16.dp))
-        ProfileItem(Icons.Filled.AccountCircle, "Información personal")
-        ProfileItem(Icons.Filled.NotificationsNone, "Notificaciones")
-        ProfileItem(Icons.AutoMirrored.Filled.HelpOutline, "Ayuda y soporte")
+        ProfileItem(Icons.Filled.AccountCircle, "Información personal") {}
+        ProfileItem(Icons.Filled.Lock, "Políticas de privacidad", onPrivacy)
+        ProfileItem(Icons.AutoMirrored.Filled.HelpOutline, "Ayuda y soporte") {}
         Spacer(Modifier.height(10.dp))
         OutlinedButton(
             onClick = onSignOut,
@@ -940,15 +968,131 @@ private fun ProfileScreen(data: DashboardData, insets: PaddingValues, onSignOut:
 }
 
 @Composable
-private fun ProfileItem(icon: ImageVector, label: String) {
+private fun ProfileItem(icon: ImageVector, label: String, onClick: () -> Unit) {
     Row(
-        modifier = Modifier.fillMaxWidth().padding(vertical = 3.dp).clip(RoundedCornerShape(12.dp)).background(Color.White).padding(horizontal = 14.dp, vertical = 15.dp),
+        modifier = Modifier.fillMaxWidth().padding(vertical = 3.dp).clip(RoundedCornerShape(12.dp)).background(Color.White).clickable(onClick = onClick).padding(horizontal = 14.dp, vertical = 15.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Icon(icon, contentDescription = null, tint = ParkGreen, modifier = Modifier.size(20.dp))
         Spacer(Modifier.width(12.dp))
         Text(label, modifier = Modifier.weight(1f), color = Ink, fontSize = 13.sp, fontWeight = FontWeight.Medium)
         Icon(Icons.AutoMirrored.Filled.KeyboardArrowRight, contentDescription = null, tint = MutedInk, modifier = Modifier.size(19.dp))
+    }
+}
+
+@Composable
+private fun AdminReportsScreen(
+    reports: List<AdminReport>,
+    loading: Boolean,
+    error: String?,
+    insets: PaddingValues,
+    onDecision: (String, String) -> Unit,
+    loadPhoto: suspend (String) -> Bitmap?,
+    onBack: () -> Unit,
+) {
+    LazyColumn(
+        modifier = Modifier.fillMaxSize().padding(insets).padding(horizontal = 18.dp),
+        verticalArrangement = Arrangement.spacedBy(10.dp),
+        contentPadding = PaddingValues(top = 8.dp, bottom = 18.dp),
+    ) {
+        item {
+            BackHeading("Control administrativo", onBack)
+            Text("Todos los reportes de la comunidad", color = MutedInk, fontSize = 12.sp, modifier = Modifier.padding(bottom = 4.dp))
+            if (loading) CircularProgressIndicator(modifier = Modifier.size(24.dp), color = ParkGreen, strokeWidth = 2.dp)
+            if (error != null) Text(error, color = Danger, fontSize = 12.sp)
+            if (reports.isEmpty() && !loading && error == null) Text("Todavía no hay reportes.", color = MutedInk, fontSize = 13.sp, modifier = Modifier.padding(vertical = 14.dp))
+        }
+        items(reports, key = { it.id }) { report ->
+            AdminReportCard(report, loading, onDecision, loadPhoto)
+        }
+    }
+}
+
+@Composable
+private fun AdminReportCard(
+    report: AdminReport,
+    loading: Boolean,
+    onDecision: (String, String) -> Unit,
+    loadPhoto: suspend (String) -> Bitmap?,
+) {
+    var showPhoto by rememberSaveable(report.id) { mutableStateOf(false) }
+    var photoLoading by remember(report.id) { mutableStateOf(false) }
+    val photo by produceState<Bitmap?>(null, report.id, showPhoto) {
+        if (showPhoto) {
+            photoLoading = true
+            value = loadPhoto(report.id)
+            photoLoading = false
+        } else value = null
+    }
+    Card(shape = RoundedCornerShape(10.dp), colors = CardDefaults.cardColors(containerColor = Color.White)) {
+        Column(Modifier.fillMaxWidth().padding(14.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(report.category, modifier = Modifier.weight(1f), color = Ink, fontSize = 14.sp, fontWeight = FontWeight.Bold)
+                Text(report.status.toStatusLabel(), color = if (report.status == "rejected") Danger else if (report.status == "approved") ParkGreen else Warning, fontSize = 11.sp, fontWeight = FontWeight.SemiBold)
+            }
+            Text("${report.userName} · ${report.userEmail}", color = MutedInk, fontSize = 11.sp)
+            Text("${report.locality}, ${report.address}", color = Ink, fontSize = 12.sp)
+            if (report.description.isNotBlank()) Text(report.description, color = MutedInk, fontSize = 12.sp)
+            Text(report.createdAt.take(16).replace('T', ' '), color = MutedInk, fontSize = 10.sp)
+            OutlinedButton(onClick = { showPhoto = !showPhoto }, modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(8.dp)) {
+                Text(if (showPhoto) "Ocultar foto" else "Ver foto del reporte", fontSize = 12.sp)
+            }
+            if (showPhoto) {
+                when {
+                    photoLoading -> CircularProgressIndicator(modifier = Modifier.align(Alignment.CenterHorizontally), color = ParkGreen)
+                    photo != null -> Image(photo!!.asImageBitmap(), contentDescription = "Foto adjunta al reporte", modifier = Modifier.fillMaxWidth().height(180.dp).clip(RoundedCornerShape(8.dp)), contentScale = androidx.compose.ui.layout.ContentScale.Crop)
+                    else -> Text("No fue posible cargar la foto.", color = MutedInk, fontSize = 11.sp)
+                }
+            }
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
+                Button(onClick = { onDecision(report.id, "approved") }, enabled = !loading, modifier = Modifier.weight(1f), shape = RoundedCornerShape(8.dp), colors = ButtonDefaults.buttonColors(containerColor = ParkGreen)) { Text("Aprobar", fontSize = 12.sp) }
+                OutlinedButton(onClick = { onDecision(report.id, "rejected") }, enabled = !loading, modifier = Modifier.weight(1f), shape = RoundedCornerShape(8.dp), border = BorderStroke(1.dp, Color(0xFFE5B5B5)), colors = ButtonDefaults.outlinedButtonColors(contentColor = Danger)) { Text("Negar", fontSize = 12.sp) }
+            }
+        }
+    }
+}
+
+@Composable
+private fun PrivacyPolicyScreen(insets: PaddingValues, onBack: () -> Unit) {
+    val context = LocalContext.current
+    Column(Modifier.fillMaxSize().padding(insets).verticalScroll(rememberScrollState()).padding(horizontal = 20.dp)) {
+        BackHeading("Políticas de privacidad", onBack)
+        Text("ParkSmart · versión informativa v0.5", color = MutedInk, fontSize = 12.sp)
+        Spacer(Modifier.height(14.dp))
+        PolicySection("Datos tratados", "La cuenta usa nombre y correo. Cada reporte puede incluir categoría, descripción, localidad, dirección y fotografía. Las coordenadas GPS solo se adjuntan si la persona concede el permiso y solicita obtener la ubicación.")
+        PolicySection("Finalidad y acceso", "Los datos se usan para recibir, ubicar, revisar y moderar reportes de estacionamiento indebido, y para mostrar mapas y estadísticas. El administrador puede ver la identidad del remitente y la foto para moderar. Los reportes con ubicación pueden ser visibles para usuarios autenticados en el mapa.")
+        PolicySection("Consentimiento y permisos", "La persona elige tomar o seleccionar la foto y enviar el reporte. El permiso de GPS es opcional y puede denegarse; en ese caso se conserva la dirección escrita manualmente. Evita incluir rostros, documentos u otros datos innecesarios. Esta versión todavía no guarda una constancia técnica de aceptación de una versión específica de la política.")
+        PolicySection("Conservación de fotos", "Las fotos se guardan en el almacenamiento privado del backend. El prototipo no tiene borrado automático ni un plazo de retención configurado: permanecen hasta que una persona operadora las elimine manualmente. Antes de un uso público se debe definir y automatizar un plazo acorde con la finalidad.")
+        PolicySection("Derechos y contacto", "Puedes solicitar consulta, corrección o eliminación de datos al responsable del proyecto. Esta versión académica aún no define una entidad responsable ni un canal de atención; esa información debe completarse antes de publicar la aplicación para uso real.")
+        PolicySection("Estado del documento", "Este resumen explica el comportamiento actual del prototipo y no reemplaza una política jurídica aprobada. El tratamiento debe limitarse a una finalidad informada y conservarse solo durante el tiempo necesario para cumplirla.")
+        Text(
+            "Consultar Ley 1581 de 2012",
+            modifier = Modifier.fillMaxWidth().clickable {
+                context.startActivity(Intent(Intent.ACTION_VIEW, android.net.Uri.parse("https://sedeelectronica.sic.gov.co/sites/default/files/normatividad/Ley_1581_2012.pdf")))
+            }.padding(vertical = 14.dp),
+            color = ParkGreen,
+            fontSize = 12.sp,
+            fontWeight = FontWeight.SemiBold,
+        )
+        Text(
+            "Guía de la SIC para tratamiento de fotografías",
+            modifier = Modifier.fillMaxWidth().clickable {
+                context.startActivity(Intent(Intent.ACTION_VIEW, android.net.Uri.parse("https://sedeelectronica.sic.gov.co/noticias/sic-expide-guia-para-el-correcto-tratamiento-de-las-fotografias-como-datos-personales")))
+            }.padding(vertical = 8.dp),
+            color = ParkGreen,
+            fontSize = 12.sp,
+            fontWeight = FontWeight.SemiBold,
+        )
+        Spacer(Modifier.height(14.dp))
+    }
+}
+
+@Composable
+private fun PolicySection(title: String, body: String) {
+    Column(Modifier.fillMaxWidth().padding(top = 12.dp).clip(RoundedCornerShape(9.dp)).background(Color.White).padding(14.dp)) {
+        Text(title, color = Ink, fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
+        Spacer(Modifier.height(6.dp))
+        Text(body, color = MutedInk, fontSize = 12.sp, lineHeight = 18.sp)
     }
 }
 
@@ -971,11 +1115,15 @@ private fun ReportRow(report: ReportSummary, compact: Boolean = false) {
     val statusColor = when (report.status) {
         ReportStatus.IN_REVIEW -> Warning
         ReportStatus.RECEIVED -> ParkGreen
+        ReportStatus.APPROVED -> ParkGreen
+        ReportStatus.REJECTED -> Danger
         ReportStatus.CLOSED -> MutedInk
     }
     val statusLabel = when (report.status) {
         ReportStatus.IN_REVIEW -> "En revisión"
         ReportStatus.RECEIVED -> "Recibido"
+        ReportStatus.APPROVED -> "Aprobado"
+        ReportStatus.REJECTED -> "Negado"
         ReportStatus.CLOSED -> "Cerrado"
     }
     Row(

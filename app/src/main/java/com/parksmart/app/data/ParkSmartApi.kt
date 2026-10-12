@@ -1,6 +1,8 @@
 package com.parksmart.app.data
 
 import android.content.Context
+import android.graphics.Bitmap
+import android.graphics.BitmapFactory
 import com.parksmart.app.BuildConfig
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.MultipartBody
@@ -15,13 +17,17 @@ import retrofit2.http.GET
 import retrofit2.http.Multipart
 import retrofit2.http.POST
 import retrofit2.http.Part
+import retrofit2.http.PATCH
+import retrofit2.http.Path
 import retrofit2.http.Query
+import okhttp3.ResponseBody
 import com.google.gson.annotations.SerializedName
+import com.parksmart.app.data.ReportStatus
 import java.io.File
 
 data class AuthRequest(val email: String, val password: String)
 data class RegisterRequest(val name: String, val email: String, val password: String)
-data class UserDto(val id: String, val name: String, val email: String)
+data class UserDto(val id: String, val name: String, val email: String, val role: String = "citizen")
 data class AuthResponse(@SerializedName("access_token") val accessToken: String, val user: UserDto)
 data class ApiReport(
     val id: String,
@@ -61,11 +67,31 @@ data class ApiZoneStatistics(
     @SerializedName("total_reports") val totalReports: Int,
     val zones: List<ApiZone>,
 )
+data class ApiAdminReport(
+    val id: String,
+    val category: String,
+    val description: String,
+    @SerializedName("photo_url") val photoUrl: String,
+    val locality: String,
+    val address: String,
+    val status: String,
+    @SerializedName("created_at") val createdAt: String,
+    @SerializedName("user_id") val userId: String,
+    @SerializedName("user_name") val userName: String,
+    @SerializedName("user_email") val userEmail: String,
+    @SerializedName("moderated_at") val moderatedAt: String?,
+)
+data class ReportDecisionRequest(val status: String)
 
 interface ParkSmartApi {
     @POST("api/v1/auth/register") suspend fun register(@Body body: RegisterRequest): AuthResponse
     @POST("api/v1/auth/login") suspend fun login(@Body body: AuthRequest): AuthResponse
     @GET("api/v1/dashboard") suspend fun dashboard(): ApiDashboard
+
+    @GET("api/v1/admin/reports") suspend fun allReports(): List<ApiAdminReport>
+    @PATCH("api/v1/admin/reports/{reportId}/decision")
+    suspend fun decideReport(@Path("reportId") reportId: String, @Body decision: ReportDecisionRequest): ApiAdminReport
+    @GET("api/v1/admin/reports/{reportId}/photo") suspend fun adminReportPhoto(@Path("reportId") reportId: String): ResponseBody
 
     @GET("api/v1/reports/nearby")
     suspend fun nearbyReports(
@@ -120,9 +146,19 @@ class ParkSmartApiRepository(context: Context) {
     suspend fun loadDashboard(): DashboardData {
         val response = api.dashboard()
         val reports = response.reports.map { report ->
-            ReportSummary(report.category, report.locality, report.address, report.createdAt, ReportStatus.RECEIVED)
+            ReportSummary(report.category, report.locality, report.address, report.createdAt, report.status.toReportStatus())
         }
         return DashboardData(currentUser(), emptyList(), reports, response.totalReports)
+    }
+
+    suspend fun loadAdminReports() = api.allReports().map { it.toAdminReport() }
+
+    suspend fun decideReport(reportId: String, status: String) =
+        api.decideReport(reportId, ReportDecisionRequest(status)).toAdminReport()
+
+    suspend fun loadAdminPhoto(reportId: String): Bitmap? {
+        val bytes = api.adminReportPhoto(reportId).bytes()
+        return BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
     }
 
     suspend fun loadNearbyMapReports(latitude: Double, longitude: Double, category: String?, status: String?, sinceDays: Int?): List<MapReport> =
@@ -160,17 +196,39 @@ class ParkSmartApiRepository(context: Context) {
         )
     }
 
-    fun signOut() { preferences.edit().remove("token").remove("name").remove("email").apply() }
+    fun signOut() { preferences.edit().remove("token").remove("name").remove("email").remove("role").apply() }
     fun restoreUser(): ParkSmartUser? = if (preferences.getString("token", null) == null) null else currentUser()
 
     private fun AuthResponse.saveSession(): ParkSmartUser {
-        preferences.edit().putString("token", accessToken).putString("name", user.name).putString("email", user.email).apply()
+        preferences.edit().putString("token", accessToken).putString("name", user.name).putString("email", user.email).putString("role", user.role).apply()
         return currentUser()
     }
 
     private fun currentUser(): ParkSmartUser {
         val name = preferences.getString("name", "Usuario ParkSmart") ?: "Usuario ParkSmart"
         val initials = name.trim().split(Regex("\\s+")).take(2).mapNotNull { it.firstOrNull()?.uppercase() }.joinToString("")
-        return ParkSmartUser(name, "Ciudadano", initials.ifBlank { "PS" })
+        val role = preferences.getString("role", "citizen") ?: "citizen"
+        return ParkSmartUser(name, role, initials.ifBlank { "PS" })
+    }
+
+    private fun ApiAdminReport.toAdminReport() = com.parksmart.app.data.AdminReport(
+        id = id,
+        category = category,
+        description = description,
+        locality = locality,
+        address = address,
+        status = status,
+        createdAt = createdAt,
+        userName = userName,
+        userEmail = userEmail,
+        moderatedAt = moderatedAt,
+    )
+
+    private fun String.toReportStatus() = when (this) {
+        "in_review" -> ReportStatus.IN_REVIEW
+        "closed" -> ReportStatus.CLOSED
+        "approved" -> ReportStatus.APPROVED
+        "rejected" -> ReportStatus.REJECTED
+        else -> ReportStatus.RECEIVED
     }
 }

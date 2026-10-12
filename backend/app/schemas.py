@@ -19,6 +19,7 @@ class UserOut(BaseModel):
     id: UUID
     name: str
     email: EmailStr
+    role: str = "citizen"
     model_config = ConfigDict(from_attributes=True)
 
 
@@ -72,3 +73,14 @@ class ZoneStatisticsOut(BaseModel):
     cell_size_m: int
     total_reports: int
     zones: list[ZoneStatisticOut]
+
+
+class ReportDecision(BaseModel):
+    status: str = Field(pattern="^(approved|rejected)$")
+
+
+class AdminReportOut(ReportOut):
+    user_id: UUID
+    user_name: str
+    user_email: EmailStr
+    moderated_at: datetime | None

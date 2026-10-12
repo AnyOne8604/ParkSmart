@@ -16,8 +16,9 @@ class User(Base):
     name: Mapped[str] = mapped_column(String(120))
     email: Mapped[str] = mapped_column(String(254), unique=True, index=True)
     password_hash: Mapped[str] = mapped_column(String(255))
+    role: Mapped[str] = mapped_column(String(20), default="citizen", nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
-    reports: Mapped[list["Report"]] = relationship(back_populates="user")
+    reports: Mapped[list["Report"]] = relationship(back_populates="user", foreign_keys="Report.user_id")
 
 
 class Report(Base):
@@ -32,5 +33,7 @@ class Report(Base):
     address: Mapped[str] = mapped_column(String(250))
     location = mapped_column(Geography(geometry_type="POINT", srid=4326), nullable=True)
     status: Mapped[str] = mapped_column(String(30), default="received")
+    moderated_by_id: Mapped[UUID | None] = mapped_column(Uuid, ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    moderated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
-    user: Mapped[User] = relationship(back_populates="reports")
+    user: Mapped[User] = relationship(back_populates="reports", foreign_keys=[user_id])

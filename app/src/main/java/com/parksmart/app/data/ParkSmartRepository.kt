@@ -13,6 +13,19 @@ data class ParkSmartUser(
     val initials: String,
 )
 
+data class AdminReport(
+    val id: String,
+    val category: String,
+    val description: String,
+    val locality: String,
+    val address: String,
+    val status: String,
+    val createdAt: String,
+    val userName: String,
+    val userEmail: String,
+    val moderatedAt: String?,
+)
+
 data class CriticalZone(
     val name: String,
     val reportCount: Int,
@@ -29,7 +42,7 @@ data class ReportSummary(
     val status: ReportStatus,
 )
 
-enum class ReportStatus { IN_REVIEW, RECEIVED, CLOSED }
+enum class ReportStatus { IN_REVIEW, RECEIVED, CLOSED, APPROVED, REJECTED }
 
 data class DashboardData(
     val user: ParkSmartUser,

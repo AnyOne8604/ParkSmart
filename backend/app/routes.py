@@ -12,8 +12,8 @@ from sqlalchemy.orm import Session
 from app.config import settings
 from app.database import get_db
 from app.models import Report, User
-from app.schemas import AuthOut, DashboardOut, NearbyReportOut, ReportOut, UserCreate, UserLogin, UserOut, ZoneStatisticsOut
-from app.security import create_access_token, current_user, hash_password, verify_password
+from app.schemas import AdminReportOut, AuthOut, DashboardOut, NearbyReportOut, ReportDecision, ReportOut, UserCreate, UserLogin, UserOut, ZoneStatisticsOut
+from app.security import administrator, create_access_token, current_user, hash_password, verify_password
 
 router = APIRouter(prefix="/api/v1")
 UPLOAD_ROOT = Path(settings.upload_dir).resolve()
@@ -49,6 +49,18 @@ def report_out(report: Report) -> ReportOut:
         address=report.address,
         status=report.status,
         created_at=report.created_at,
+    )
+
+
+def admin_report_out(report: Report) -> AdminReportOut:
+    data = report_out(report).model_dump()
+    data["photo_url"] = f"/api/v1/admin/reports/{report.id}/photo"
+    return AdminReportOut(
+        **data,
+        user_id=report.user_id,
+        user_name=report.user.name,
+        user_email=report.user.email,
+        moderated_at=report.moderated_at,
     )
 
 
@@ -117,6 +129,7 @@ async def create_report(
         locality=locality,
         address=address,
         location=WKTElement(f"POINT({longitude} {latitude})", srid=4326) if latitude is not None else None,
+        status="received",
     )
     db.add(report)
     db.commit()
@@ -130,10 +143,52 @@ def list_reports(user: User = Depends(current_user), db: Session = Depends(get_d
     return [report_out(report) for report in reports]
 
 
+@router.get("/admin/reports", response_model=list[AdminReportOut])
+def list_all_reports(
+    _: User = Depends(administrator),
+    db: Session = Depends(get_db),
+) -> list[AdminReportOut]:
+    reports = db.scalars(select(Report).join(Report.user).order_by(Report.created_at.desc())).all()
+    return [admin_report_out(report) for report in reports]
+
+
+@router.patch("/admin/reports/{report_id}/decision", response_model=AdminReportOut)
+def decide_report(
+    report_id: str,
+    decision: ReportDecision,
+    admin: User = Depends(administrator),
+    db: Session = Depends(get_db),
+) -> AdminReportOut:
+    report = db.scalar(select(Report).where(Report.id == report_id))
+    if report is None:
+        raise HTTPException(status_code=404, detail="Reporte no encontrado")
+    report.status = decision.status
+    report.moderated_by_id = admin.id
+    report.moderated_at = datetime.now(timezone.utc)
+    db.commit()
+    db.refresh(report)
+    return admin_report_out(report)
+
+
+@router.get("/admin/reports/{report_id}/photo")
+def admin_report_photo(
+    report_id: str,
+    _: User = Depends(administrator),
+    db: Session = Depends(get_db),
+) -> FileResponse:
+    report = db.scalar(select(Report).where(Report.id == report_id))
+    if report is None:
+        raise HTTPException(status_code=404, detail="Reporte no encontrado")
+    path = (UPLOAD_ROOT / report.photo_key).resolve()
+    if path.parent != UPLOAD_ROOT or not path.is_file():
+        raise HTTPException(status_code=404, detail="Foto no encontrada")
+    return FileResponse(path)
+
+
 def validate_map_filters(category: str | None, status_filter: str | None) -> None:
     if category is not None and category not in ALLOWED_CATEGORIES:
         raise HTTPException(status_code=422, detail="Categoría de reporte no válida")
-    if status_filter is not None and status_filter not in {"received", "in_review", "closed"}:
+    if status_filter is not None and status_filter not in {"received", "in_review", "closed", "approved", "rejected"}:
         raise HTTPException(status_code=422, detail="Estado de reporte no válido")
 
 
@@ -212,7 +267,7 @@ def report_zone_statistics(
                     COUNT(*) FILTER (WHERE category = 'Automóvil') AS automobile_count,
                     COUNT(*) FILTER (WHERE category = 'Motocicleta') AS motorcycle_count,
                     COUNT(*) FILTER (WHERE category = 'Otro') AS other_count,
-                    COUNT(*) FILTER (WHERE status <> 'closed') AS open_count
+                    COUNT(*) FILTER (WHERE status NOT IN ('closed', 'rejected')) AS open_count
                 FROM filtered
                 GROUP BY cell
             )

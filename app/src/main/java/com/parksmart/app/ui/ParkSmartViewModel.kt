@@ -3,6 +3,7 @@ package com.parksmart.app.ui
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.parksmart.app.data.DashboardData
+import com.parksmart.app.data.AdminReport
 import com.parksmart.app.data.MapData
 import com.parksmart.app.data.ParkSmartUser
 import com.parksmart.app.data.ParkSmartApiRepository
@@ -24,6 +25,9 @@ data class ParkSmartUiState(
     val mapData: MapData = MapData(),
     val mapLoading: Boolean = false,
     val mapError: String? = null,
+    val adminReports: List<AdminReport> = emptyList(),
+    val adminLoading: Boolean = false,
+    val adminError: String? = null,
 )
 
 class ParkSmartViewModel(private val repository: ParkSmartApiRepository) : ViewModel() {
@@ -61,6 +65,32 @@ class ParkSmartViewModel(private val repository: ParkSmartApiRepository) : ViewM
                 .onFailure { error -> _state.value = _state.value.copy(message = error.messageForUser()) }
         }
     }
+
+    fun loadAdminReports() {
+        viewModelScope.launch {
+            _state.value = _state.value.copy(adminLoading = true, adminError = null)
+            runCatching { repository.loadAdminReports() }
+                .onSuccess { _state.value = _state.value.copy(adminReports = it, adminLoading = false) }
+                .onFailure { _state.value = _state.value.copy(adminLoading = false, adminError = it.messageForUser()) }
+        }
+    }
+
+    fun moderateReport(reportId: String, status: String) {
+        viewModelScope.launch {
+            _state.value = _state.value.copy(adminLoading = true, adminError = null)
+            runCatching { repository.decideReport(reportId, status) }
+                .onSuccess { updated ->
+                    _state.value = _state.value.copy(
+                        adminReports = _state.value.adminReports.map { if (it.id == updated.id) updated else it },
+                        adminLoading = false,
+                    )
+                    refreshDashboard()
+                }
+                .onFailure { _state.value = _state.value.copy(adminLoading = false, adminError = it.messageForUser()) }
+        }
+    }
+
+    suspend fun loadAdminPhoto(reportId: String) = runCatching { repository.loadAdminPhoto(reportId) }.getOrNull()
 
     fun refreshMap(latitude: Double, longitude: Double, category: String?, status: String?, sinceDays: Int?, refreshZones: Boolean = true) {
         nearbyMapJob?.cancel()

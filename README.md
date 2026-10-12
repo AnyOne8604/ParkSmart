@@ -1,6 +1,6 @@
 # ParkSmart
 
-Aplicación Android para reportar situaciones de estacionamiento indebido. La versión `v0.4.0` incorpora mapa interactivo de Bogotá, búsqueda de reportes georreferenciados, filtros y agregados espaciales con PostGIS.
+Aplicación Android para reportar situaciones de estacionamiento indebido. La versión `v0.5.0` agrega moderación administrativa de reportes, estados aprobados/negados y una pantalla visible de políticas de privacidad.
 
 ## Requisitos
 
@@ -54,7 +54,8 @@ ParkSmart/
 |-- backend/
 |   |-- app/                      # FastAPI, auth, rutas, modelos, settings
 |   `-- migrations/               # Alembic y esquema PostGIS
-|       `-- versions/0002_manual_report_location.py
+|       |-- versions/0002_manual_report_location.py
+|       `-- versions/0003_admin_moderation.py
 |-- backend/test_localities.py
 |-- Contexto/                     # Mockup, logo y material del proyecto
 |-- Documentacion/                # Documentos de versiones anteriores
@@ -65,7 +66,7 @@ ParkSmart/
 `-- README.md
 ```
 
-## Funcionalidades de v0.4.0
+## Funcionalidades de v0.5.0
 
 - Registro manual e inicio de sesión por correo y contraseña.
 - Contraseñas con Argon2 y sesión JWT guardada localmente en Android.
@@ -83,6 +84,13 @@ ParkSmart/
 - API autenticada de reportes cercanos mediante radio de 25 km y estadísticas PostGIS en cuadrículas de 1 km proyectadas en EPSG:3116.
 - Estadísticas por cuadrícula: total, categorías y reportes abiertos; respetan los filtros del mapa.
 - Icono adaptativo del launcher basado en el logo de ParkSmart.
+- Roles persistidos `citizen` y `admin`; las contraseñas se almacenan como hash Argon2.
+- Cuenta inicial para Carlos Ramírez (`movilidad@gmail.com`), creada por el backend al iniciar si aún no existe.
+- Control administrativo con todos los reportes, información del remitente y foto protegida; permite aprobar o negar cada reporte.
+- Los reportes nuevos inician en `received`; las decisiones de moderación usan los estados `approved` y `rejected`.
+- Perfil reemplaza Notificaciones por Políticas de privacidad, que explica datos tratados, GPS opcional, acceso y conservación actual de fotos.
+
+La cuenta administrativa se configura mediante `ADMIN_NAME`, `ADMIN_EMAIL` y `ADMIN_PASSWORD` en `.env`. El valor de demostración debe reemplazarse antes de compartir o desplegar el sistema; no se debe reutilizar en producción.
 
 MapLibre es el motor cartográfico; OpenStreetMap aporta los datos/teselas de desarrollo. `tile.openstreetmap.org` es un servicio de mejor esfuerzo: exige atribución, identificación y respeto de caché, y no es una infraestructura de producción ni permite precarga/offline. Cambia `parksmart.mapTileUrl` a un proveedor contratado o teselas propias antes de desplegar.
 
@@ -99,6 +107,9 @@ La geocodificación de direcciones manuales se evaluó y no se activa en v0.4: l
 | `GET` | `/api/v1/reports` | Bearer | Listar reportes propios |
 | `GET` | `/api/v1/reports/nearby` | Bearer | Reportes con GPS por radio; filtros `category`, `status`, `since_days` |
 | `GET` | `/api/v1/reports/zones` | Bearer | Estadísticas PostGIS por cuadrícula de 1 km con filtros equivalentes |
+| `GET` | `/api/v1/admin/reports` | Bearer admin | Listar reportes de todos los usuarios |
+| `GET` | `/api/v1/admin/reports/{id}/photo` | Bearer admin | Obtener la foto para moderación |
+| `PATCH` | `/api/v1/admin/reports/{id}/decision` | Bearer admin | Aprobar (`approved`) o negar (`rejected`) |
 | `GET` | `/api/v1/reports/{id}/photo` | Bearer | Obtener foto propia |
 | `GET` | `/api/v1/dashboard` | Bearer | Resumen y reportes recientes |
 | `GET` | `/health` | Público | Verificar API y base de datos |
@@ -114,7 +125,7 @@ La geocodificación de direcciones manuales se evaluó y no se activa en v0.4: l
 - Las zonas son cuadrículas métricas de 1 km (EPSG:3116), no localidades oficiales ni polígonos administrativos.
 - Las direcciones manuales no se geocodifican todavía.
 - La cámara se abre mediante el capturador del sistema tras pedir permiso a ParkSmart; no hay visor CameraX integrado.
-- No hay recuperación de contraseña, verificación de correo, cierre remoto de sesiones ni roles administrativos.
+- No hay recuperación de contraseña, verificación de correo, cierre remoto de sesiones ni un historial separado de auditoría de moderación.
 - No se integra IA, clasificación automática, analítica agregada ni notificaciones push.
 - El texto de error de algunos fallos HTTP puede ser genérico y el estado del GPS depende de que el dispositivo tenga una ubicación reciente.
 
@@ -138,11 +149,11 @@ La geocodificación de direcciones manuales se evaluó y no se activa en v0.4: l
 
 La hoja de ruta recomendada para las siguientes versiones es:
 
-1. **v0.5 - Confianza y gestión:** verificación de correo y recuperación de contraseña; flujo de moderación y roles administrativos; reportar contenido incorrecto; políticas visibles de privacidad, consentimiento y retención de fotos.
-2. **v0.6 - Analítica e inteligencia:** panel de tendencias y zonas críticas; evaluar clasificación asistida por IA para categorizar reportes, siempre con revisión humana y métricas de calidad.
+1. **v0.6 - Confianza y gestión:** verificación de correo y recuperación de contraseña; historial de auditoría, herramientas de reclamo, consentimiento versionado y retención/eliminación automática de fotos.
+2. **v0.7 - Analítica e inteligencia:** panel de tendencias y zonas críticas; evaluar clasificación asistida por IA para categorizar reportes, siempre con revisión humana y métricas de calidad.
 3. **v1.0 - Preparación para uso real:** desplegar API y base de datos en infraestructura administrada; HTTPS/TLS, secretos gestionados, límites antiabuso, copias de seguridad, monitoreo, CI/CD, pruebas de seguridad y publicación Android.
 
-Antes de avanzar de versión, conviene cerrar también estos requisitos transversales: pruebas de integración Android/API, paginación espacial, límites y validación del contenido de imágenes, estrategia de retención, accesibilidad y pruebas en teléfonos reales. La geocodificación, moderación, IA y despliegue productivo no forman parte de v0.4.0.
+Antes de un uso público, deben definirse el responsable y canal de atención, registrar la aceptación de una versión de la política y automatizar la retención de fotos. La política visible de v0.5 es informativa y todavía no captura esa constancia.
 
 ## Referencias técnicas
 
