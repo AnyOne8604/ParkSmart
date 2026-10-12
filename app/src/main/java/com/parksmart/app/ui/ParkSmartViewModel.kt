@@ -87,6 +87,21 @@ class ParkSmartViewModel(private val repository: ParkSmartApiRepository) : ViewM
         }
     }
 
+    fun requestClassificationSuggestion(reportId: String) {
+        viewModelScope.launch {
+            _state.value = _state.value.copy(adminLoading = true, adminError = null)
+            runCatching { repository.suggestReportCategory(reportId) }
+                .onSuccess { updated ->
+                    _state.value = _state.value.copy(
+                        adminReports = _state.value.adminReports.map { if (it.id == updated.id) updated else it },
+                        adminLoading = false,
+                    )
+                    loadClassificationMetrics()
+                }
+                .onFailure { _state.value = _state.value.copy(adminLoading = false, adminError = it.messageForUser()) }
+        }
+    }
+
     fun reviewReportCategory(reportId: String, category: String) {
         viewModelScope.launch {
             _state.value = _state.value.copy(adminLoading = true, adminError = null)

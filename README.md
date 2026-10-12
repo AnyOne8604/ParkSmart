@@ -1,6 +1,6 @@
 # ParkSmart
 
-Aplicación Android para reportar situaciones de estacionamiento indebido. La versión `v0.6.0` agrega analítica diaria por localidad, tendencias agregadas de 30 días y un asistente local de clasificación con revisión humana.
+Aplicación Android para reportar situaciones de estacionamiento indebido. La versión `v0.6.1` mejora la evaluación independiente del asistente de categorías y agrega comparaciones de tendencias en ventanas de 7 y 30 días.
 
 ## Requisitos
 
@@ -56,7 +56,8 @@ ParkSmart/
 |   `-- migrations/               # Alembic y esquema PostGIS
 |       |-- versions/0002_manual_report_location.py
 |       `-- versions/0003_admin_moderation.py
-|       `-- versions/0004_analytics_classification.py
+|       |-- versions/0004_analytics_classification.py
+|       `-- versions/0005_independent_quality.py
 |-- backend/test_localities.py
 |-- Contexto/                     # Mockup, logo y material del proyecto
 |-- Documentacion/                # Documentos de versiones anteriores
@@ -67,7 +68,7 @@ ParkSmart/
 `-- README.md
 ```
 
-## Funcionalidades de v0.6.0
+## Funcionalidades de v0.6.1
 
 - Registro manual e inicio de sesión por correo y contraseña.
 - Contraseñas con Argon2 y sesión JWT guardada localmente en Android.
@@ -94,7 +95,11 @@ ParkSmart/
 - Los niveles diarios son Alta (10 o más), Media (5 a 9) y Baja (1 a 4).
 - Estadísticas agrega totales de hoy y últimos 30 días, tendencia diaria y desgloses globales por categoría y estado.
 - Clasificador local Naive Bayes sobre el texto de la descripción (no analiza fotos), entrenado únicamente con categorías revisadas por administración. Requiere al menos 12 etiquetas y dos clases; sin suficientes ejemplos no emite sugerencias.
-- Control permite confirmar o corregir categorías. Muestra exactitud y F1 macro calculados con validación leave-one-out. Las sugerencias no cambian datos ni moderan reportes y no se envían a servicios externos.
+- Control permite solicitar una sugerencia explícita, confirmar o corregir la categoría. La sugerencia, confianza y versión del clasificador se guardan antes de la revisión humana; abrir la lista no genera predicciones de forma oculta.
+- Entrenamiento y evaluación se separan de forma estable por identificador de reporte. Los reportes de evaluación apartados no se utilizan para entrenar el modelo. La evaluación compara el asistente con la categoría inicial del reportante sobre los mismos casos y muestra exactitud, precisión, cobertura y F1 por categoría.
+- El panel diferencia que un modelo pueda generar sugerencias de que la evaluación ya tenga datos suficientes. Solo presenta puntuaciones cuando existen al menos 15 reportes de evaluación y 3 ejemplos confirmados por categoría; hasta entonces muestra tamaños y oculta puntuaciones.
+- Estadísticas compara ventanas móviles de los últimos 7 días con los 7 anteriores, y los últimos 30 con los 30 anteriores, mostrando conteos y variación porcentual cuando existe un periodo previo no vacío.
+- La clasificación no examina fotos ni usa un servicio externo; no cambia categorías ni decisiones automáticamente. La categoría inicial se conserva como línea base y la categoría revisada como referencia humana.
 
 La cuenta administrativa se configura mediante `ADMIN_NAME`, `ADMIN_EMAIL` y `ADMIN_PASSWORD` en `.env`. El valor de demostración debe reemplazarse antes de compartir o desplegar el sistema; no se debe reutilizar en producción.
 
@@ -113,12 +118,13 @@ La geocodificación de direcciones manuales se evaluó y no se activa en v0.4: l
 | `GET` | `/api/v1/reports` | Bearer | Listar reportes propios |
 | `GET` | `/api/v1/reports/nearby` | Bearer | Reportes con GPS por radio; filtros `category`, `status`, `since_days` |
 | `GET` | `/api/v1/reports/zones` | Bearer | Estadísticas PostGIS por cuadrícula de 1 km con filtros equivalentes |
-| `GET` | `/api/v1/analytics` | Bearer | Conteos por localidad para el día de Bogotá y métricas agregadas de 30 días |
+| `GET` | `/api/v1/analytics` | Bearer | Conteos diarios y comparaciones de ventanas móviles de 7 y 30 días contra sus periodos previos |
 | `GET` | `/api/v1/admin/reports` | Bearer admin | Listar reportes de todos los usuarios |
 | `GET` | `/api/v1/admin/reports/{id}/photo` | Bearer admin | Obtener la foto para moderación |
 | `PATCH` | `/api/v1/admin/reports/{id}/decision` | Bearer admin | Aprobar (`approved`) o negar (`rejected`) |
 | `POST` | `/api/v1/admin/reports/{id}/category-review` | Bearer admin | Confirmar/corregir categoría humana para evaluación y entrenamiento local |
-| `GET` | `/api/v1/admin/classification/metrics` | Bearer admin | Métricas de validación del clasificador local |
+| `POST` | `/api/v1/admin/reports/{id}/classification-suggestion` | Bearer admin | Generar y guardar una sugerencia local previa a la revisión humana |
+| `GET` | `/api/v1/admin/classification/metrics` | Bearer admin | Evaluación independiente y comparación con categoría inicial |
 | `GET` | `/api/v1/reports/{id}/photo` | Bearer | Obtener foto propia |
 | `GET` | `/api/v1/dashboard` | Bearer | Resumen y reportes recientes |
 | `GET` | `/health` | Público | Verificar API y base de datos |
@@ -135,7 +141,9 @@ La geocodificación de direcciones manuales se evaluó y no se activa en v0.4: l
 - Las direcciones manuales no se geocodifican todavía.
 - La cámara se abre mediante el capturador del sistema tras pedir permiso a ParkSmart; no hay visor CameraX integrado.
 - No hay recuperación de contraseña, verificación de correo, cierre remoto de sesiones ni un historial separado de auditoría de moderación.
-- El clasificador es experimental, léxico y puede tener pocos ejemplos o sesgos. La validación leave-one-out es orientativa, no equivale a un conjunto independiente; la decisión final siempre es humana. No analiza fotografías ni usa un modelo generativo.
+- El clasificador es experimental, léxico y puede tener pocos ejemplos o sesgos. El corte de evaluación por UUID es estable, pero no reemplaza una cohorte externa, temporal o geográficamente independiente. Las métricas se ocultan hasta alcanzar los umbrales configurados.
+- Solo cuentan para evaluar los reportes cuya sugerencia quedó guardada antes de la etiqueta humana final. Los reportes antiguos sin predicción previa no son casos de evaluación. La categoría inicial es una comparación práctica, no necesariamente una referencia experta independiente.
+- No se normaliza el conteo por población ni se estima prevalencia/riesgo por localidad: faltan denominadores poblacionales y datos de cobertura confiables. Las cifras describen reportes recibidos, no la incidencia real.
 - Las tendencias no ajustan estacionalidad ni población y no ejecutan pruebas formales de anomalías. El ranking por localidad mide volumen reportado, no riesgo ni prevalencia.
 - No hay notificaciones push.
 - El texto de error de algunos fallos HTTP puede ser genérico y el estado del GPS depende de que el dispositivo tenga una ubicación reciente.
@@ -151,7 +159,7 @@ La geocodificación de direcciones manuales se evaluó y no se activa en v0.4: l
 - **`Unsupported escape sequence` en `build.gradle.kts`:** la URL ya no se escribe como literal fijo en el script. El proyecto lee `parksmart.apiBaseUrl` de `local.properties` y usa `http://10.0.2.2:8000/` si no existe esa propiedad. Para teléfono, agrega la IP LAN a `local.properties`.
 
 - **HTTP 500 al agrupar la tendencia diaria en PostgreSQL:** SQLAlchemy compiló la zona horaria con parámetros distintos en `SELECT` y `GROUP BY`. Se reemplazó esa expresión por SQL PostgreSQL explícito con `AT TIME ZONE 'America/Bogota'`, conversión a fecha y agrupación por alias. La ruta volvió a responder con una serie de 30 días.
-- **`Unable to establish loopback connection` en Gradle:** el primer intento también quedó bloqueado por permisos del archivo de bloqueo del caché Gradle. Al reintentar con acceso autorizado, Gradle todavía falló antes de compilar Kotlin. La causa no quedó resuelta en esta sesión; reintenta desde Android Studio y revisa firewall/antivirus y acceso loopback de Java/Gradle.
+- **`Unable to establish loopback connection` en Gradle (también al verificar v0.6.1):** Gradle falla antes de compilar Kotlin, por lo que no confirma ni descarta errores del código Android. No quedó resuelto. Cierra Android Studio, termina procesos Gradle/JDK atascados, vuelve a abrir el proyecto y prueba Sync y `:app:compileDebugKotlin`; si persiste, revisa firewall/antivirus y permisos de loopback para Java/Gradle, y consulta el log de Gradle para identificar el proceso bloqueado.
 
   ```properties
   parksmart.apiBaseUrl=http://192.168.1.20:8000/
@@ -163,7 +171,7 @@ La geocodificación de direcciones manuales se evaluó y no se activa en v0.4: l
 
 La hoja de ruta recomendada para las siguientes versiones es:
 
-1. **v0.7 - Calidad analítica:** ampliar el conjunto de evaluación independiente; comparar el asistente con una línea base humana y evaluar análisis temporal y normalización si existen datos confiables.
+1. **v0.7 - Validación externa:** ampliar el conjunto revisado por personas expertas, contrastar con una línea base humana independiente y revisar desempeño por localidad y periodo. Evaluar estacionalidad solo cuando haya historia suficiente y cobertura documentada.
 2. **v0.8 - Confianza y gestión:** verificación de correo y recuperación de contraseña; auditoría de moderación, reclamos, consentimiento versionado y retención/eliminación automática de fotos.
 3. **v1.0 - Preparación para uso real:** desplegar API y base de datos en infraestructura administrada; HTTPS/TLS, secretos gestionados, límites antiabuso, copias de seguridad, monitoreo, CI/CD, pruebas de seguridad y publicación Android.
 

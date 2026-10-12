@@ -12,9 +12,16 @@ from sqlalchemy.orm import Session
 
 from app.config import settings
 from app.database import get_db
-from app.classification import LabeledReport, LocalityCategoryClassifier, classification_metrics
+from app.classification import (
+    CLASSIFIER_VERSION,
+    EvaluatedReport,
+    LabeledReport,
+    LocalityCategoryClassifier,
+    classification_metrics,
+    is_validation_report,
+)
 from app.models import Report, User
-from app.schemas import AdminReportOut, AnalyticsOut, AuthOut, CategoryReview, ClassificationMetricsOut, DailyTrendOut, DashboardOut, DimensionCountOut, LocalityCountOut, NearbyReportOut, ReportDecision, ReportOut, UserCreate, UserLogin, UserOut, ZoneStatisticsOut
+from app.schemas import AdminReportOut, AnalyticsOut, AuthOut, CategoryReview, CategorySuggestionOut, ClassificationMetricsOut, DailyTrendOut, DashboardOut, DimensionCountOut, LocalityCountOut, NearbyReportOut, PeriodComparisonOut, ReportDecision, ReportOut, UserCreate, UserLogin, UserOut, ZoneStatisticsOut
 from app.security import administrator, create_access_token, current_user, hash_password, verify_password
 
 router = APIRouter(prefix="/api/v1")
@@ -55,7 +62,7 @@ def report_out(report: Report) -> ReportOut:
     )
 
 
-def admin_report_out(report: Report, prediction: tuple[str, float] | None = None) -> AdminReportOut:
+def admin_report_out(report: Report) -> AdminReportOut:
     data = report_out(report).model_dump()
     data["photo_url"] = f"/api/v1/admin/reports/{report.id}/photo"
     if report.reviewed_category:
@@ -67,8 +74,9 @@ def admin_report_out(report: Report, prediction: tuple[str, float] | None = None
         user_email=report.user.email,
         moderated_at=report.moderated_at,
         reviewed_category=report.reviewed_category,
-        suggested_category=prediction[0] if prediction and report.reviewed_category is None else None,
-        suggestion_confidence=prediction[1] if prediction and report.reviewed_category is None else None,
+        suggested_category=report.suggested_category,
+        suggestion_confidence=report.suggestion_confidence,
+        classifier_version=report.classifier_version,
     )
 
 
@@ -82,10 +90,32 @@ def locality_level(report_count: int) -> str:
 
 def reviewed_examples(db: Session) -> list[LabeledReport]:
     rows = db.execute(
-        select(Report.description, Report.reviewed_category)
+        select(Report.id, Report.description, Report.reviewed_category)
         .where(Report.reviewed_category.is_not(None), func.length(func.trim(Report.description)) > 0)
     ).all()
-    return [LabeledReport(text=description or "", category=category) for description, category in rows]
+    return [LabeledReport(text=description or "", category=category, report_id=report_id) for report_id, description, category in rows]
+
+
+def training_examples(db: Session) -> list[LabeledReport]:
+    return [example for example in reviewed_examples(db) if not is_validation_report(example.report_id)]
+
+
+def heldout_evaluations(db: Session) -> list[EvaluatedReport]:
+    rows = db.execute(
+        select(Report.id, Report.category, Report.suggested_category, Report.reviewed_category)
+        .where(
+            Report.reviewed_category.is_not(None),
+            Report.suggested_category.is_not(None),
+            Report.suggestion_created_at.is_not(None),
+            Report.classifier_version == CLASSIFIER_VERSION,
+            func.length(func.trim(Report.description)) > 0,
+        )
+    ).all()
+    return [
+        EvaluatedReport(actual_category=reviewed, suggested_category=suggested, initial_category=initial)
+        for report_id, initial, suggested, reviewed in rows
+        if is_validation_report(report_id)
+    ]
 
 
 @router.post("/auth/register", response_model=AuthOut, status_code=status.HTTP_201_CREATED)
@@ -173,8 +203,34 @@ def list_all_reports(
     db: Session = Depends(get_db),
 ) -> list[AdminReportOut]:
     reports = db.scalars(select(Report).join(Report.user).order_by(Report.created_at.desc())).all()
-    classifier = LocalityCategoryClassifier(reviewed_examples(db))
-    return [admin_report_out(report, classifier.predict(report.description)) for report in reports]
+    return [admin_report_out(report) for report in reports]
+
+
+@router.post("/admin/reports/{report_id}/classification-suggestion", response_model=CategorySuggestionOut)
+def suggest_report_category(
+    report_id: str,
+    _: User = Depends(administrator),
+    db: Session = Depends(get_db),
+) -> CategorySuggestionOut:
+    report = db.scalar(select(Report).where(Report.id == report_id))
+    if report is None:
+        raise HTTPException(status_code=404, detail="Reporte no encontrado")
+    if report.reviewed_category is not None:
+        raise HTTPException(status_code=409, detail="La categoría humana ya fue confirmada para este reporte")
+    if report.suggested_category is not None:
+        return CategorySuggestionOut(**admin_report_out(report).model_dump())
+    classifier = LocalityCategoryClassifier(training_examples(db))
+    if not classifier.ready:
+        raise HTTPException(status_code=409, detail="Aún hacen falta ejemplos revisados suficientes para generar sugerencias")
+    prediction = classifier.predict(report.description)
+    if prediction is None:
+        raise HTTPException(status_code=422, detail="La descripción no contiene texto suficiente para sugerir una categoría")
+    report.suggested_category, report.suggestion_confidence = prediction
+    report.classifier_version = CLASSIFIER_VERSION
+    report.suggestion_created_at = datetime.now(timezone.utc)
+    db.commit()
+    db.refresh(report)
+    return CategorySuggestionOut(**admin_report_out(report).model_dump())
 
 
 @router.post("/admin/reports/{report_id}/category-review", response_model=AdminReportOut)
@@ -191,8 +247,7 @@ def review_report_category(
     report.category_reviewed_at = datetime.now(timezone.utc)
     db.commit()
     db.refresh(report)
-    classifier = LocalityCategoryClassifier(reviewed_examples(db))
-    return admin_report_out(report, classifier.predict(report.description))
+    return admin_report_out(report)
 
 
 @router.get("/admin/classification/metrics", response_model=ClassificationMetricsOut)
@@ -200,11 +255,12 @@ def category_classification_metrics(
     _: User = Depends(administrator),
     db: Session = Depends(get_db),
 ) -> ClassificationMetricsOut:
-    return ClassificationMetricsOut(**classification_metrics(reviewed_examples(db)))
+    return ClassificationMetricsOut(**classification_metrics(reviewed_examples(db), heldout_evaluations(db)))
 
 
 @router.get("/analytics", response_model=AnalyticsOut)
 def report_analytics(_: User = Depends(current_user), db: Session = Depends(get_db)) -> AnalyticsOut:
+    now_utc = datetime.now(timezone.utc)
     local_today = datetime.now(BOGOTA_TIMEZONE).date()
     start_today = datetime.combine(local_today, time.min, BOGOTA_TIMEZONE).astimezone(timezone.utc)
     start_tomorrow = datetime.combine(local_today + timedelta(days=1), time.min, BOGOTA_TIMEZONE).astimezone(timezone.utc)
@@ -245,6 +301,23 @@ def report_analytics(_: User = Depends(current_user), db: Session = Depends(get_
         .group_by(Report.status)
         .order_by(func.count(Report.id).desc())
     ).all()
+
+    def period_comparison(days: int) -> PeriodComparisonOut:
+        current_start = now_utc - timedelta(days=days)
+        previous_start = current_start - timedelta(days=days)
+        current_count = db.scalar(
+            select(func.count(Report.id)).where(Report.created_at >= current_start, Report.created_at < now_utc)
+        ) or 0
+        previous_count = db.scalar(
+            select(func.count(Report.id)).where(Report.created_at >= previous_start, Report.created_at < current_start)
+        ) or 0
+        return PeriodComparisonOut(
+            current_count=current_count,
+            previous_count=previous_count,
+            change_count=current_count - previous_count,
+            change_percent=((current_count - previous_count) / previous_count * 100) if previous_count else None,
+        )
+
     return AnalyticsOut(
         today=local_today.isoformat(),
         total_reports_today=sum(count for _, count in locality_rows),
@@ -253,6 +326,8 @@ def report_analytics(_: User = Depends(current_user), db: Session = Depends(get_
         daily_trend=daily_trend,
         category_counts=[DimensionCountOut(name=name, report_count=count) for name, count in category_rows],
         status_counts=[DimensionCountOut(name=name, report_count=count) for name, count in status_rows],
+        comparison_7_days=period_comparison(7),
+        comparison_30_days=period_comparison(30),
     )
 
 

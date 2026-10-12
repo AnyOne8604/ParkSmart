@@ -27,6 +27,7 @@ data class AdminReport(
     val reviewedCategory: String? = null,
     val suggestedCategory: String? = null,
     val suggestionConfidence: Double? = null,
+    val classifierVersion: String? = null,
 )
 
 data class CriticalZone(
@@ -37,6 +38,7 @@ data class CriticalZone(
 
 data class DailyReportCount(val date: String, val reportCount: Int)
 data class ReportDimensionCount(val name: String, val reportCount: Int)
+data class PeriodComparison(val current: Int, val previous: Int, val change: Int, val changePercent: Double?)
 data class ReportAnalytics(
     val today: String = "",
     val totalReportsToday: Int = 0,
@@ -45,16 +47,27 @@ data class ReportAnalytics(
     val dailyTrend: List<DailyReportCount> = emptyList(),
     val categoryCounts: List<ReportDimensionCount> = emptyList(),
     val statusCounts: List<ReportDimensionCount> = emptyList(),
+    val comparison7Days: PeriodComparison = PeriodComparison(0, 0, 0, null),
+    val comparison30Days: PeriodComparison = PeriodComparison(0, 0, 0, null),
 )
+data class ClassQualityMetrics(val samples: Int, val precision: Double?, val recall: Double?, val f1: Double?)
 data class ClassificationMetrics(
     val reviewedCount: Int,
+    val trainingCount: Int,
     val validationSamples: Int,
     val ready: Boolean,
-    val minimumSamples: Int,
+    val modelReady: Boolean,
+    val minimumTrainingSamples: Int,
+    val minimumValidationSamples: Int,
+    val minimumValidationPerClass: Int,
+    val classifierVersion: String,
     val accuracy: Double?,
     val macroPrecision: Double?,
     val macroRecall: Double?,
     val macroF1: Double?,
+    val baselineAccuracy: Double?,
+    val baselineMacroF1: Double?,
+    val perClass: Map<String, ClassQualityMetrics>,
 )
 
 enum class ZonePriority { HIGH, MEDIUM, LOW }

@@ -254,7 +254,7 @@ fun ParkSmartApp() {
             AppRoute.PROFILE -> ProfileScreen(dashboard, insets, onPrivacy = { routeName = AppRoute.PRIVACY.name }, onSignOut = { model.signOut(); routeName = AppRoute.LOGIN.name })
             AppRoute.REPORTS -> ReportsScreen(dashboard, insets, onBack = { routeName = AppRoute.HOME.name })
             AppRoute.STATISTICS -> StatisticsScreen(dashboard, insets, onBack = { routeName = AppRoute.HOME.name })
-            AppRoute.ADMIN -> AdminReportsScreen(state.adminReports, state.classificationMetrics, state.adminLoading, state.adminError, insets, model::moderateReport, model::reviewReportCategory, model::loadAdminPhoto, onBack = { routeName = AppRoute.HOME.name })
+            AppRoute.ADMIN -> AdminReportsScreen(state.adminReports, state.classificationMetrics, state.adminLoading, state.adminError, insets, model::moderateReport, model::reviewReportCategory, model::requestClassificationSuggestion, model::loadAdminPhoto, onBack = { routeName = AppRoute.HOME.name })
             AppRoute.PRIVACY -> PrivacyPolicyScreen(insets, onBack = { routeName = AppRoute.PROFILE.name })
             AppRoute.LOGIN -> Unit
         }
@@ -991,6 +991,7 @@ private fun AdminReportsScreen(
     insets: PaddingValues,
     onDecision: (String, String) -> Unit,
     onCategoryReview: (String, String) -> Unit,
+    onClassificationSuggestion: (String) -> Unit,
     loadPhoto: suspend (String) -> Bitmap?,
     onBack: () -> Unit,
 ) {
@@ -1008,7 +1009,7 @@ private fun AdminReportsScreen(
             if (reports.isEmpty() && !loading && error == null) Text("Todavía no hay reportes.", color = MutedInk, fontSize = 13.sp, modifier = Modifier.padding(vertical = 14.dp))
         }
         items(reports, key = { it.id }) { report ->
-            AdminReportCard(report, loading, onDecision, onCategoryReview, loadPhoto)
+            AdminReportCard(report, loading, onDecision, onCategoryReview, onClassificationSuggestion, loadPhoto)
         }
     }
 }
@@ -1019,6 +1020,7 @@ private fun AdminReportCard(
     loading: Boolean,
     onDecision: (String, String) -> Unit,
     onCategoryReview: (String, String) -> Unit,
+    onClassificationSuggestion: (String) -> Unit,
     loadPhoto: suspend (String) -> Bitmap?,
 ) {
     var showPhoto by rememberSaveable(report.id) { mutableStateOf(false) }
@@ -1045,9 +1047,13 @@ private fun AdminReportCard(
             } else if (report.suggestedCategory != null) {
                 val confidence = ((report.suggestionConfidence ?: 0.0) * 100).toInt()
                 Text("Por descripción: ${report.suggestedCategory} · confianza ${confidence}%", color = Ink, fontSize = 11.sp, fontWeight = FontWeight.SemiBold)
+                report.classifierVersion?.let { Text("Modelo: $it", color = MutedInk, fontSize = 10.sp) }
                 Text("Revisa el reporte y confirma o corrige la categoría. La sugerencia no cambia el reporte automáticamente.", color = MutedInk, fontSize = 10.sp)
             } else {
-                Text("Asistente sin sugerencia: faltan etiquetas humanas suficientes o una descripción útil.", color = MutedInk, fontSize = 10.sp)
+                Text("La sugerencia es opcional y queda registrada antes de la revisión humana.", color = MutedInk, fontSize = 10.sp)
+                OutlinedButton(onClick = { onClassificationSuggestion(report.id) }, enabled = !loading, modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(8.dp)) {
+                    Text("Generar sugerencia", fontSize = 12.sp)
+                }
             }
             Row(horizontalArrangement = Arrangement.spacedBy(5.dp), modifier = Modifier.fillMaxWidth()) {
                 listOf("Automóvil" to "Auto", "Motocicleta" to "Moto", "Otro" to "Otro").forEach { (category, label) ->
@@ -1085,21 +1091,29 @@ private fun ClassificationQualitySummary(metrics: com.parksmart.app.data.Classif
         if (metrics == null) {
             Text("Cargando métricas de calidad…", color = MutedInk, fontSize = 10.sp)
         } else {
-            Text("Etiquetas revisadas por personas: ${metrics.reviewedCount} · mínimo para sugerir: ${metrics.minimumSamples}", color = MutedInk, fontSize = 10.sp)
-            val accuracy = metrics.accuracy?.let { "${(it * 100).toInt()}%" } ?: "Sin estimación"
-            val f1 = metrics.macroF1?.let { "${(it * 100).toInt()}%" } ?: "Sin estimación"
-            Text("Validación leave-one-out · ${metrics.validationSamples} muestras · exactitud $accuracy · F1 macro $f1", color = MutedInk, fontSize = 10.sp)
-            if (!metrics.ready) Text("Aún no hay ejemplos confirmados suficientes en al menos dos categorías; por ahora no se ofrecen predicciones.", color = Warning, fontSize = 10.sp)
+            Text("Modelo ${metrics.classifierVersion} · etiquetas humanas ${metrics.reviewedCount} · entrenamiento ${metrics.trainingCount}/${metrics.minimumTrainingSamples}", color = MutedInk, fontSize = 10.sp)
+            if (!metrics.modelReady) {
+                Text("Aún faltan ejemplos de entrenamiento para generar sugerencias.", color = Warning, fontSize = 10.sp)
+            } else if (!metrics.ready) {
+                Text("El asistente puede sugerir, pero la evaluación independiente aún es pequeña: ${metrics.validationSamples}/${metrics.minimumValidationSamples} casos y al menos ${metrics.minimumValidationPerClass} por categoría.", color = Warning, fontSize = 10.sp)
+            } else {
+                Text("Evaluación independiente: ${metrics.validationSamples} casos · modelo exactitud ${metrics.accuracy.asPercent()} y F1 ${metrics.macroF1.asPercent()} · categoría inicial exactitud ${metrics.baselineAccuracy.asPercent()} y F1 ${metrics.baselineMacroF1.asPercent()}", color = MutedInk, fontSize = 10.sp)
+                metrics.perClass.forEach { (category, values) ->
+                    Text("$category · ${values.samples} casos · precisión ${values.precision.asPercent()} · cobertura ${values.recall.asPercent()} · F1 ${values.f1.asPercent()}", color = MutedInk, fontSize = 10.sp)
+                }
+            }
         }
     }
 }
+
+private fun Double?.asPercent(): String = this?.let { "${(it * 100).toInt()}%" } ?: "N/D"
 
 @Composable
 private fun PrivacyPolicyScreen(insets: PaddingValues, onBack: () -> Unit) {
     val context = LocalContext.current
     Column(Modifier.fillMaxSize().padding(insets).verticalScroll(rememberScrollState()).padding(horizontal = 20.dp)) {
         BackHeading("Políticas de privacidad", onBack)
-        Text("ParkSmart · versión informativa v0.6", color = MutedInk, fontSize = 12.sp)
+        Text("ParkSmart · versión informativa v0.6.1", color = MutedInk, fontSize = 12.sp)
         Spacer(Modifier.height(14.dp))
         PolicySection("Datos tratados", "La cuenta usa nombre y correo. Cada reporte puede incluir categoría, descripción, localidad, dirección y fotografía. Las coordenadas GPS solo se adjuntan si la persona concede el permiso y solicita obtener la ubicación.")
         PolicySection("Finalidad y acceso", "Los datos se usan para recibir, ubicar, revisar y moderar reportes de estacionamiento indebido, y para mostrar mapas y estadísticas. El administrador puede ver la identidad del remitente y la foto para moderar. Los reportes con ubicación pueden ser visibles para usuarios autenticados en el mapa.")
@@ -1200,6 +1214,10 @@ private fun StatisticsScreen(data: DashboardData, insets: PaddingValues, onBack:
             MetricTile("Reportes hoy", data.analytics.totalReportsToday.toString(), Icons.AutoMirrored.Filled.ListAlt, Modifier.weight(1f))
             MetricTile("Últimos 30 días", data.analytics.totalReports30Days.toString(), Icons.Filled.BarChart, Modifier.weight(1f))
         }
+        Spacer(Modifier.height(14.dp))
+        PeriodComparisonSummary("Últimos 7 días vs. 7 anteriores", data.analytics.comparison7Days)
+        Spacer(Modifier.height(8.dp))
+        PeriodComparisonSummary("Últimos 30 días vs. 30 anteriores", data.analytics.comparison30Days)
         Spacer(Modifier.height(20.dp))
         Text("Localidades con reportes hoy", color = Ink, fontSize = 16.sp, fontWeight = FontWeight.Bold)
         Spacer(Modifier.height(12.dp))
@@ -1222,6 +1240,19 @@ private fun StatisticsScreen(data: DashboardData, insets: PaddingValues, onBack:
         Text("Estados · 30 días", color = Ink, fontSize = 16.sp, fontWeight = FontWeight.Bold)
         data.analytics.statusCounts.forEach { StatLine(it.name.toStatusLabel(), it.reportCount) }
         Spacer(Modifier.height(18.dp))
+    }
+}
+
+@Composable
+private fun PeriodComparisonSummary(title: String, comparison: com.parksmart.app.data.PeriodComparison) {
+    Column(
+        Modifier.fillMaxWidth().clip(RoundedCornerShape(8.dp)).background(Color.White).padding(12.dp),
+        verticalArrangement = Arrangement.spacedBy(4.dp),
+    ) {
+        Text(title, color = Ink, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+        val delta = if (comparison.change > 0) "+${comparison.change}" else comparison.change.toString()
+        val percent = comparison.changePercent?.let { " (${if (it > 0) "+" else ""}${it.toInt()}%)" } ?: " (sin periodo previo comparable)"
+        Text("${comparison.current} reportes · periodo previo ${comparison.previous} · cambio $delta$percent", color = MutedInk, fontSize = 11.sp)
     }
 }
 

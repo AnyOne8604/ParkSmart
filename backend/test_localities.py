@@ -1,6 +1,6 @@
 import unittest
 from datetime import datetime, timezone
-from uuid import uuid4
+from uuid import UUID, uuid4
 from fastapi import HTTPException
 
 from app.models import Report, User
@@ -62,7 +62,7 @@ class AssistedClassificationTests(unittest.TestCase):
     def test_metrics_report_no_quality_score_without_labels(self):
         from app.classification import classification_metrics
 
-        metrics = classification_metrics([])
+        metrics = classification_metrics([], [])
         self.assertFalse(metrics["ready"])
         self.assertIsNone(metrics["accuracy"])
 
@@ -74,9 +74,37 @@ class AssistedClassificationTests(unittest.TestCase):
         model = LocalityCategoryClassifier(examples)
         self.assertTrue(model.ready)
         self.assertEqual(model.predict("carro sedan estacionado")[0], "Automóvil")
-        metrics = classification_metrics(examples)
-        self.assertEqual(metrics["validation_samples"], 12)
+        metrics = classification_metrics(examples, [])
+        self.assertEqual(metrics["training_count"], 12)
+        self.assertEqual(metrics["validation_samples"], 0)
+        self.assertIsNone(metrics["accuracy"])
+
+    def test_independent_holdout_compares_model_and_reporter_baseline(self):
+        from app.classification import EvaluatedReport, LabeledReport, classification_metrics
+
+        training = [
+            LabeledReport(f"auto carro sedan {index}", "Automóvil", UUID(int=index + 1))
+            for index in range(12)
+        ]
+        heldout = [
+            EvaluatedReport("Automóvil", "Automóvil", "Motocicleta") if index % 2 == 0
+            else EvaluatedReport("Motocicleta", "Motocicleta", "Motocicleta")
+            for index in range(16)
+        ]
+        metrics = classification_metrics(training, heldout)
+        self.assertTrue(metrics["ready"])
+        self.assertEqual(metrics["validation_samples"], 16)
         self.assertEqual(metrics["accuracy"], 1.0)
+        self.assertEqual(metrics["baseline_accuracy"], 0.5)
+        self.assertEqual(metrics["per_class"]["Automóvil"]["samples"], 8)
+
+    def test_classifier_quality_stays_unavailable_when_holdout_is_small(self):
+        from app.classification import EvaluatedReport, classification_metrics
+
+        evaluated = [EvaluatedReport("Automóvil", "Automóvil", "Otro") for _ in range(4)]
+        metrics = classification_metrics([], evaluated)
+        self.assertFalse(metrics["ready"])
+        self.assertIsNone(metrics["accuracy"])
 
     def test_admin_category_review_persists_human_label(self):
         owner = User(id=uuid4(), name="Reportante", email="owner@example.com", password_hash="hashed", role="citizen")

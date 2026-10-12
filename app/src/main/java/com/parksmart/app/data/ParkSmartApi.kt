@@ -45,6 +45,12 @@ data class ApiDashboard(@SerializedName("total_reports") val totalReports: Int, 
 data class ApiLocalityCount(val locality: String, @SerializedName("report_count") val reportCount: Int, val level: String)
 data class ApiDailyTrend(@SerializedName("date") val date: String, @SerializedName("report_count") val reportCount: Int)
 data class ApiDimensionCount(val name: String, @SerializedName("report_count") val reportCount: Int)
+data class ApiPeriodComparison(
+    @SerializedName("current_count") val currentCount: Int,
+    @SerializedName("previous_count") val previousCount: Int,
+    @SerializedName("change_count") val changeCount: Int,
+    @SerializedName("change_percent") val changePercent: Double?,
+)
 data class ApiAnalytics(
     val today: String,
     @SerializedName("total_reports_today") val totalReportsToday: Int,
@@ -53,16 +59,32 @@ data class ApiAnalytics(
     @SerializedName("daily_trend") val dailyTrend: List<ApiDailyTrend>,
     @SerializedName("category_counts") val categoryCounts: List<ApiDimensionCount>,
     @SerializedName("status_counts") val statusCounts: List<ApiDimensionCount>,
+    @SerializedName("comparison_7_days") val comparison7Days: ApiPeriodComparison,
+    @SerializedName("comparison_30_days") val comparison30Days: ApiPeriodComparison,
+)
+data class ApiClassMetrics(
+    val samples: Int,
+    val precision: Double?,
+    val recall: Double?,
+    val f1: Double?,
 )
 data class ApiClassificationMetrics(
     @SerializedName("reviewed_count") val reviewedCount: Int,
+    @SerializedName("training_count") val trainingCount: Int,
     @SerializedName("validation_samples") val validationSamples: Int,
     val ready: Boolean,
-    @SerializedName("minimum_samples") val minimumSamples: Int,
+    @SerializedName("model_ready") val modelReady: Boolean,
+    @SerializedName("minimum_training_samples") val minimumTrainingSamples: Int,
+    @SerializedName("minimum_validation_samples") val minimumValidationSamples: Int,
+    @SerializedName("minimum_validation_per_class") val minimumValidationPerClass: Int,
+    @SerializedName("classifier_version") val classifierVersion: String,
     val accuracy: Double?,
     @SerializedName("macro_precision") val macroPrecision: Double?,
     @SerializedName("macro_recall") val macroRecall: Double?,
     @SerializedName("macro_f1") val macroF1: Double?,
+    @SerializedName("baseline_accuracy") val baselineAccuracy: Double?,
+    @SerializedName("baseline_macro_f1") val baselineMacroF1: Double?,
+    @SerializedName("per_class") val perClass: Map<String, ApiClassMetrics>,
 )
 data class ApiNearbyReport(
     val id: String,
@@ -105,6 +127,7 @@ data class ApiAdminReport(
     @SerializedName("reviewed_category") val reviewedCategory: String? = null,
     @SerializedName("suggested_category") val suggestedCategory: String? = null,
     @SerializedName("suggestion_confidence") val suggestionConfidence: Double? = null,
+    @SerializedName("classifier_version") val classifierVersion: String? = null,
 )
 data class ReportDecisionRequest(val status: String)
 data class CategoryReviewRequest(val category: String)
@@ -117,6 +140,8 @@ interface ParkSmartApi {
 
     @GET("api/v1/admin/reports") suspend fun allReports(): List<ApiAdminReport>
     @GET("api/v1/admin/classification/metrics") suspend fun classificationMetrics(): ApiClassificationMetrics
+    @POST("api/v1/admin/reports/{reportId}/classification-suggestion")
+    suspend fun suggestReportCategory(@Path("reportId") reportId: String): ApiAdminReport
     @POST("api/v1/admin/reports/{reportId}/category-review")
     suspend fun reviewReportCategory(@Path("reportId") reportId: String, @Body review: CategoryReviewRequest): ApiAdminReport
     @PATCH("api/v1/admin/reports/{reportId}/decision")
@@ -185,6 +210,8 @@ class ParkSmartApiRepository(context: Context) {
     suspend fun loadAdminReports() = api.allReports().map { it.toAdminReport() }
 
     suspend fun loadClassificationMetrics() = api.classificationMetrics().toMetrics()
+
+    suspend fun suggestReportCategory(reportId: String) = api.suggestReportCategory(reportId).toAdminReport()
 
     suspend fun reviewReportCategory(reportId: String, category: String) =
         api.reviewReportCategory(reportId, CategoryReviewRequest(category)).toAdminReport()
@@ -261,6 +288,7 @@ class ParkSmartApiRepository(context: Context) {
         reviewedCategory = reviewedCategory,
         suggestedCategory = suggestedCategory,
         suggestionConfidence = suggestionConfidence,
+        classifierVersion = classifierVersion,
     )
 
     private fun ApiAnalytics.toReportAnalytics() = ReportAnalytics(
@@ -278,10 +306,29 @@ class ParkSmartApiRepository(context: Context) {
         dailyTrend = dailyTrend.map { DailyReportCount(it.date, it.reportCount) },
         categoryCounts = categoryCounts.map { ReportDimensionCount(it.name, it.reportCount) },
         statusCounts = statusCounts.map { ReportDimensionCount(it.name, it.reportCount) },
+        comparison7Days = comparison7Days.toPeriodComparison(),
+        comparison30Days = comparison30Days.toPeriodComparison(),
     )
 
+    private fun ApiPeriodComparison.toPeriodComparison() = PeriodComparison(currentCount, previousCount, changeCount, changePercent)
+
     private fun ApiClassificationMetrics.toMetrics() = ClassificationMetrics(
-        reviewedCount, validationSamples, ready, minimumSamples, accuracy, macroPrecision, macroRecall, macroF1,
+        reviewedCount = reviewedCount,
+        trainingCount = trainingCount,
+        validationSamples = validationSamples,
+        ready = ready,
+        modelReady = modelReady,
+        minimumTrainingSamples = minimumTrainingSamples,
+        minimumValidationSamples = minimumValidationSamples,
+        minimumValidationPerClass = minimumValidationPerClass,
+        classifierVersion = classifierVersion,
+        accuracy = accuracy,
+        macroPrecision = macroPrecision,
+        macroRecall = macroRecall,
+        macroF1 = macroF1,
+        baselineAccuracy = baselineAccuracy,
+        baselineMacroF1 = baselineMacroF1,
+        perClass = perClass.mapValues { (_, value) -> ClassQualityMetrics(value.samples, value.precision, value.recall, value.f1) },
     )
 
     private fun String.toReportStatus() = when (this) {

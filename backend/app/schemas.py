@@ -63,6 +63,13 @@ class DimensionCountOut(BaseModel):
     report_count: int
 
 
+class PeriodComparisonOut(BaseModel):
+    current_count: int
+    previous_count: int
+    change_count: int
+    change_percent: float | None
+
+
 class AnalyticsOut(BaseModel):
     today: str
     total_reports_today: int
@@ -71,17 +78,34 @@ class AnalyticsOut(BaseModel):
     daily_trend: list[DailyTrendOut]
     category_counts: list[DimensionCountOut]
     status_counts: list[DimensionCountOut]
+    comparison_7_days: PeriodComparisonOut
+    comparison_30_days: PeriodComparisonOut
+
+
+class ClassificationClassMetricsOut(BaseModel):
+    samples: int
+    precision: float | None
+    recall: float | None
+    f1: float | None
 
 
 class ClassificationMetricsOut(BaseModel):
     reviewed_count: int
+    training_count: int
     validation_samples: int
     ready: bool
-    minimum_samples: int
+    model_ready: bool
+    minimum_training_samples: int
+    minimum_validation_samples: int
+    minimum_validation_per_class: int
+    classifier_version: str
     accuracy: float | None
     macro_precision: float | None
     macro_recall: float | None
     macro_f1: float | None
+    baseline_accuracy: float | None
+    baseline_macro_f1: float | None
+    per_class: dict[str, ClassificationClassMetricsOut]
 
 
 class CategoryReview(BaseModel):
@@ -128,3 +152,8 @@ class AdminReportOut(ReportOut):
     reviewed_category: str | None = None
     suggested_category: str | None = None
     suggestion_confidence: float | None = None
+    classifier_version: str | None = None
+
+
+class CategorySuggestionOut(AdminReportOut):
+    pass

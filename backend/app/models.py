@@ -3,7 +3,7 @@ from uuid import UUID
 from uuid import uuid4
 
 from geoalchemy2 import Geography
-from sqlalchemy import DateTime, ForeignKey, String, Text, Uuid
+from sqlalchemy import DateTime, Float, ForeignKey, String, Text, Uuid
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.database import Base
@@ -37,5 +37,9 @@ class Report(Base):
     moderated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     reviewed_category: Mapped[str | None] = mapped_column(String(40), nullable=True)
     category_reviewed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    suggested_category: Mapped[str | None] = mapped_column(String(40), nullable=True)
+    suggestion_confidence: Mapped[float | None] = mapped_column(Float, nullable=True)
+    classifier_version: Mapped[str | None] = mapped_column(String(40), nullable=True)
+    suggestion_created_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
     user: Mapped[User] = relationship(back_populates="reports", foreign_keys=[user_id])
