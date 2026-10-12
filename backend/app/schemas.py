@@ -47,6 +47,47 @@ class DashboardOut(BaseModel):
     reports: list[ReportOut]
 
 
+class LocalityCountOut(BaseModel):
+    locality: str
+    report_count: int
+    level: str
+
+
+class DailyTrendOut(BaseModel):
+    date: str
+    report_count: int
+
+
+class DimensionCountOut(BaseModel):
+    name: str
+    report_count: int
+
+
+class AnalyticsOut(BaseModel):
+    today: str
+    total_reports_today: int
+    total_reports_30_days: int
+    localities_today: list[LocalityCountOut]
+    daily_trend: list[DailyTrendOut]
+    category_counts: list[DimensionCountOut]
+    status_counts: list[DimensionCountOut]
+
+
+class ClassificationMetricsOut(BaseModel):
+    reviewed_count: int
+    validation_samples: int
+    ready: bool
+    minimum_samples: int
+    accuracy: float | None
+    macro_precision: float | None
+    macro_recall: float | None
+    macro_f1: float | None
+
+
+class CategoryReview(BaseModel):
+    category: str = Field(pattern="^(Automóvil|Motocicleta|Otro)$")
+
+
 class NearbyReportOut(BaseModel):
     id: UUID
     category: str
@@ -84,3 +125,6 @@ class AdminReportOut(ReportOut):
     user_name: str
     user_email: EmailStr
     moderated_at: datetime | None
+    reviewed_category: str | None = None
+    suggested_category: str | None = None
+    suggestion_confidence: float | None = None

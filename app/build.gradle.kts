@@ -9,7 +9,7 @@ val localProperties = Properties().apply {
     val propertiesFile = rootProject.file("local.properties")
     if (propertiesFile.exists()) propertiesFile.inputStream().use { load(it) }
 }
-val parksmartApiBaseUrl = localProperties.getProperty("parksmart.apiBaseUrl", "http://10.0.2.2:8000/")
+val parksmartApiBaseUrl = localProperties.getProperty("parksmart.apiBaseUrl", "http://192.168.0.7:8000/")
 val parksmartMapTileUrl = localProperties.getProperty("parksmart.mapTileUrl", "https://tile.openstreetmap.org/{z}/{x}/{y}.png")
 
 android {
@@ -20,8 +20,8 @@ android {
         applicationId = "com.parksmart.app"
         minSdk = 26
         targetSdk = 36
-        versionCode = 5
-        versionName = "0.5.0"
+        versionCode = 6
+        versionName = "0.6.0"
         buildConfigField("String", "API_BASE_URL", "\"$parksmartApiBaseUrl\"")
         buildConfigField("String", "MAP_TILE_URL", "\"$parksmartMapTileUrl\"")
     }

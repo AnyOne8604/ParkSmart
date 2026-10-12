@@ -4,6 +4,7 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.parksmart.app.data.DashboardData
 import com.parksmart.app.data.AdminReport
+import com.parksmart.app.data.ClassificationMetrics
 import com.parksmart.app.data.MapData
 import com.parksmart.app.data.ParkSmartUser
 import com.parksmart.app.data.ParkSmartApiRepository
@@ -28,6 +29,7 @@ data class ParkSmartUiState(
     val adminReports: List<AdminReport> = emptyList(),
     val adminLoading: Boolean = false,
     val adminError: String? = null,
+    val classificationMetrics: ClassificationMetrics? = null,
 )
 
 class ParkSmartViewModel(private val repository: ParkSmartApiRepository) : ViewModel() {
@@ -70,7 +72,29 @@ class ParkSmartViewModel(private val repository: ParkSmartApiRepository) : ViewM
         viewModelScope.launch {
             _state.value = _state.value.copy(adminLoading = true, adminError = null)
             runCatching { repository.loadAdminReports() }
-                .onSuccess { _state.value = _state.value.copy(adminReports = it, adminLoading = false) }
+                .onSuccess { reports ->
+                    _state.value = _state.value.copy(adminReports = reports, adminLoading = false)
+                    loadClassificationMetrics()
+                }
+                .onFailure { _state.value = _state.value.copy(adminLoading = false, adminError = it.messageForUser()) }
+        }
+    }
+
+    private fun loadClassificationMetrics() {
+        viewModelScope.launch {
+            runCatching { repository.loadClassificationMetrics() }
+                .onSuccess { _state.value = _state.value.copy(classificationMetrics = it) }
+        }
+    }
+
+    fun reviewReportCategory(reportId: String, category: String) {
+        viewModelScope.launch {
+            _state.value = _state.value.copy(adminLoading = true, adminError = null)
+            runCatching { repository.reviewReportCategory(reportId, category) }
+                .onSuccess {
+                    refreshDashboard()
+                    loadAdminReports()
+                }
                 .onFailure { _state.value = _state.value.copy(adminLoading = false, adminError = it.messageForUser()) }
         }
     }

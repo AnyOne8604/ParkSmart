@@ -35,5 +35,7 @@ class Report(Base):
     status: Mapped[str] = mapped_column(String(30), default="received")
     moderated_by_id: Mapped[UUID | None] = mapped_column(Uuid, ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
     moderated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    reviewed_category: Mapped[str | None] = mapped_column(String(40), nullable=True)
+    category_reviewed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
     user: Mapped[User] = relationship(back_populates="reports", foreign_keys=[user_id])

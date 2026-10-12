@@ -42,6 +42,28 @@ data class ApiReport(
     @SerializedName("created_at") val createdAt: String,
 )
 data class ApiDashboard(@SerializedName("total_reports") val totalReports: Int, val reports: List<ApiReport>)
+data class ApiLocalityCount(val locality: String, @SerializedName("report_count") val reportCount: Int, val level: String)
+data class ApiDailyTrend(@SerializedName("date") val date: String, @SerializedName("report_count") val reportCount: Int)
+data class ApiDimensionCount(val name: String, @SerializedName("report_count") val reportCount: Int)
+data class ApiAnalytics(
+    val today: String,
+    @SerializedName("total_reports_today") val totalReportsToday: Int,
+    @SerializedName("total_reports_30_days") val totalReports30Days: Int,
+    @SerializedName("localities_today") val localitiesToday: List<ApiLocalityCount>,
+    @SerializedName("daily_trend") val dailyTrend: List<ApiDailyTrend>,
+    @SerializedName("category_counts") val categoryCounts: List<ApiDimensionCount>,
+    @SerializedName("status_counts") val statusCounts: List<ApiDimensionCount>,
+)
+data class ApiClassificationMetrics(
+    @SerializedName("reviewed_count") val reviewedCount: Int,
+    @SerializedName("validation_samples") val validationSamples: Int,
+    val ready: Boolean,
+    @SerializedName("minimum_samples") val minimumSamples: Int,
+    val accuracy: Double?,
+    @SerializedName("macro_precision") val macroPrecision: Double?,
+    @SerializedName("macro_recall") val macroRecall: Double?,
+    @SerializedName("macro_f1") val macroF1: Double?,
+)
 data class ApiNearbyReport(
     val id: String,
     val category: String,
@@ -80,15 +102,23 @@ data class ApiAdminReport(
     @SerializedName("user_name") val userName: String,
     @SerializedName("user_email") val userEmail: String,
     @SerializedName("moderated_at") val moderatedAt: String?,
+    @SerializedName("reviewed_category") val reviewedCategory: String? = null,
+    @SerializedName("suggested_category") val suggestedCategory: String? = null,
+    @SerializedName("suggestion_confidence") val suggestionConfidence: Double? = null,
 )
 data class ReportDecisionRequest(val status: String)
+data class CategoryReviewRequest(val category: String)
 
 interface ParkSmartApi {
     @POST("api/v1/auth/register") suspend fun register(@Body body: RegisterRequest): AuthResponse
     @POST("api/v1/auth/login") suspend fun login(@Body body: AuthRequest): AuthResponse
     @GET("api/v1/dashboard") suspend fun dashboard(): ApiDashboard
+    @GET("api/v1/analytics") suspend fun analytics(): ApiAnalytics
 
     @GET("api/v1/admin/reports") suspend fun allReports(): List<ApiAdminReport>
+    @GET("api/v1/admin/classification/metrics") suspend fun classificationMetrics(): ApiClassificationMetrics
+    @POST("api/v1/admin/reports/{reportId}/category-review")
+    suspend fun reviewReportCategory(@Path("reportId") reportId: String, @Body review: CategoryReviewRequest): ApiAdminReport
     @PATCH("api/v1/admin/reports/{reportId}/decision")
     suspend fun decideReport(@Path("reportId") reportId: String, @Body decision: ReportDecisionRequest): ApiAdminReport
     @GET("api/v1/admin/reports/{reportId}/photo") suspend fun adminReportPhoto(@Path("reportId") reportId: String): ResponseBody
@@ -145,13 +175,19 @@ class ParkSmartApiRepository(context: Context) {
 
     suspend fun loadDashboard(): DashboardData {
         val response = api.dashboard()
+        val analytics = api.analytics().toReportAnalytics()
         val reports = response.reports.map { report ->
             ReportSummary(report.category, report.locality, report.address, report.createdAt, report.status.toReportStatus())
         }
-        return DashboardData(currentUser(), emptyList(), reports, response.totalReports)
+        return DashboardData(currentUser(), analytics.localitiesToday, reports, response.totalReports, analytics)
     }
 
     suspend fun loadAdminReports() = api.allReports().map { it.toAdminReport() }
+
+    suspend fun loadClassificationMetrics() = api.classificationMetrics().toMetrics()
+
+    suspend fun reviewReportCategory(reportId: String, category: String) =
+        api.reviewReportCategory(reportId, CategoryReviewRequest(category)).toAdminReport()
 
     suspend fun decideReport(reportId: String, status: String) =
         api.decideReport(reportId, ReportDecisionRequest(status)).toAdminReport()
@@ -222,6 +258,30 @@ class ParkSmartApiRepository(context: Context) {
         userName = userName,
         userEmail = userEmail,
         moderatedAt = moderatedAt,
+        reviewedCategory = reviewedCategory,
+        suggestedCategory = suggestedCategory,
+        suggestionConfidence = suggestionConfidence,
+    )
+
+    private fun ApiAnalytics.toReportAnalytics() = ReportAnalytics(
+        today = today,
+        totalReportsToday = totalReportsToday,
+        totalReports30Days = totalReports30Days,
+        localitiesToday = localitiesToday.map { count ->
+            val priority = when (count.level) {
+                "Alta" -> ZonePriority.HIGH
+                "Media" -> ZonePriority.MEDIUM
+                else -> ZonePriority.LOW
+            }
+            CriticalZone(count.locality, count.reportCount, priority)
+        },
+        dailyTrend = dailyTrend.map { DailyReportCount(it.date, it.reportCount) },
+        categoryCounts = categoryCounts.map { ReportDimensionCount(it.name, it.reportCount) },
+        statusCounts = statusCounts.map { ReportDimensionCount(it.name, it.reportCount) },
+    )
+
+    private fun ApiClassificationMetrics.toMetrics() = ClassificationMetrics(
+        reviewedCount, validationSamples, ready, minimumSamples, accuracy, macroPrecision, macroRecall, macroF1,
     )
 
     private fun String.toReportStatus() = when (this) {

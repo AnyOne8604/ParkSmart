@@ -13,6 +13,7 @@ import androidx.core.content.ContextCompat
 import androidx.core.content.FileProvider
 
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -253,7 +254,7 @@ fun ParkSmartApp() {
             AppRoute.PROFILE -> ProfileScreen(dashboard, insets, onPrivacy = { routeName = AppRoute.PRIVACY.name }, onSignOut = { model.signOut(); routeName = AppRoute.LOGIN.name })
             AppRoute.REPORTS -> ReportsScreen(dashboard, insets, onBack = { routeName = AppRoute.HOME.name })
             AppRoute.STATISTICS -> StatisticsScreen(dashboard, insets, onBack = { routeName = AppRoute.HOME.name })
-            AppRoute.ADMIN -> AdminReportsScreen(state.adminReports, state.adminLoading, state.adminError, insets, model::moderateReport, model::loadAdminPhoto, onBack = { routeName = AppRoute.HOME.name })
+            AppRoute.ADMIN -> AdminReportsScreen(state.adminReports, state.classificationMetrics, state.adminLoading, state.adminError, insets, model::moderateReport, model::reviewReportCategory, model::loadAdminPhoto, onBack = { routeName = AppRoute.HOME.name })
             AppRoute.PRIVACY -> PrivacyPolicyScreen(insets, onBack = { routeName = AppRoute.PROFILE.name })
             AppRoute.LOGIN -> Unit
         }
@@ -444,15 +445,16 @@ private fun HomeScreen(data: DashboardData, insets: PaddingValues, isAdmin: Bool
         Spacer(Modifier.height(22.dp))
         Row(verticalAlignment = Alignment.CenterVertically) {
             Text("Zonas críticas hoy", modifier = Modifier.weight(1f), color = Ink, fontSize = 17.sp, fontWeight = FontWeight.Bold)
-            Text("Ver todas", color = ParkGreen, fontSize = 12.sp, fontWeight = FontWeight.SemiBold, modifier = Modifier.clickable { onNavigate(AppRoute.STATISTICS) })
+            Text(data.analytics.today, color = MutedInk, fontSize = 10.sp)
         }
         Spacer(Modifier.height(10.dp))
-        if (data.zones.isEmpty()) {
-            Text("Aún no hay datos suficientes para identificar zonas críticas.", modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp)).background(Color.White).padding(14.dp), color = MutedInk, fontSize = 12.sp)
-        } else data.zones.forEachIndexed { index, zone ->
+        if (data.analytics.localitiesToday.isEmpty()) {
+            Text("Hoy aún no hay reportes por localidad.", modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(8.dp)).background(Color.White).padding(14.dp), color = MutedInk, fontSize = 12.sp)
+        } else data.analytics.localitiesToday.take(3).forEachIndexed { index, zone ->
             ZoneRow(zone)
-            if (index != data.zones.lastIndex) Spacer(Modifier.height(8.dp))
+            if (index != minOf(data.analytics.localitiesToday.lastIndex, 2)) Spacer(Modifier.height(8.dp))
         }
+        OutlinedButton(onClick = { onNavigate(AppRoute.STATISTICS) }, modifier = Modifier.fillMaxWidth().padding(top = 8.dp), shape = RoundedCornerShape(8.dp)) { Text("Ver más") }
         Spacer(Modifier.height(20.dp))
         Text("Actividad reciente", color = Ink, fontSize = 17.sp, fontWeight = FontWeight.Bold)
         Spacer(Modifier.height(10.dp))
@@ -983,10 +985,12 @@ private fun ProfileItem(icon: ImageVector, label: String, onClick: () -> Unit) {
 @Composable
 private fun AdminReportsScreen(
     reports: List<AdminReport>,
+    classificationMetrics: com.parksmart.app.data.ClassificationMetrics?,
     loading: Boolean,
     error: String?,
     insets: PaddingValues,
     onDecision: (String, String) -> Unit,
+    onCategoryReview: (String, String) -> Unit,
     loadPhoto: suspend (String) -> Bitmap?,
     onBack: () -> Unit,
 ) {
@@ -998,12 +1002,13 @@ private fun AdminReportsScreen(
         item {
             BackHeading("Control administrativo", onBack)
             Text("Todos los reportes de la comunidad", color = MutedInk, fontSize = 12.sp, modifier = Modifier.padding(bottom = 4.dp))
+            ClassificationQualitySummary(classificationMetrics)
             if (loading) CircularProgressIndicator(modifier = Modifier.size(24.dp), color = ParkGreen, strokeWidth = 2.dp)
             if (error != null) Text(error, color = Danger, fontSize = 12.sp)
             if (reports.isEmpty() && !loading && error == null) Text("Todavía no hay reportes.", color = MutedInk, fontSize = 13.sp, modifier = Modifier.padding(vertical = 14.dp))
         }
         items(reports, key = { it.id }) { report ->
-            AdminReportCard(report, loading, onDecision, loadPhoto)
+            AdminReportCard(report, loading, onDecision, onCategoryReview, loadPhoto)
         }
     }
 }
@@ -1013,6 +1018,7 @@ private fun AdminReportCard(
     report: AdminReport,
     loading: Boolean,
     onDecision: (String, String) -> Unit,
+    onCategoryReview: (String, String) -> Unit,
     loadPhoto: suspend (String) -> Bitmap?,
 ) {
     var showPhoto by rememberSaveable(report.id) { mutableStateOf(false) }
@@ -1034,6 +1040,26 @@ private fun AdminReportCard(
             Text("${report.locality}, ${report.address}", color = Ink, fontSize = 12.sp)
             if (report.description.isNotBlank()) Text(report.description, color = MutedInk, fontSize = 12.sp)
             Text(report.createdAt.take(16).replace('T', ' '), color = MutedInk, fontSize = 10.sp)
+            if (report.reviewedCategory != null) {
+                Text("Categoría revisada por administración: ${report.reviewedCategory}", color = ParkGreen, fontSize = 11.sp, fontWeight = FontWeight.SemiBold)
+            } else if (report.suggestedCategory != null) {
+                val confidence = ((report.suggestionConfidence ?: 0.0) * 100).toInt()
+                Text("Por descripción: ${report.suggestedCategory} · confianza ${confidence}%", color = Ink, fontSize = 11.sp, fontWeight = FontWeight.SemiBold)
+                Text("Revisa el reporte y confirma o corrige la categoría. La sugerencia no cambia el reporte automáticamente.", color = MutedInk, fontSize = 10.sp)
+            } else {
+                Text("Asistente sin sugerencia: faltan etiquetas humanas suficientes o una descripción útil.", color = MutedInk, fontSize = 10.sp)
+            }
+            Row(horizontalArrangement = Arrangement.spacedBy(5.dp), modifier = Modifier.fillMaxWidth()) {
+                listOf("Automóvil" to "Auto", "Motocicleta" to "Moto", "Otro" to "Otro").forEach { (category, label) ->
+                    OutlinedButton(
+                        onClick = { onCategoryReview(report.id, category) },
+                        enabled = !loading,
+                        modifier = Modifier.weight(1f).height(38.dp),
+                        contentPadding = PaddingValues(horizontal = 2.dp, vertical = 2.dp),
+                        shape = RoundedCornerShape(7.dp),
+                    ) { Text(if (report.reviewedCategory == category) "✓ $label" else label, fontSize = 9.sp, maxLines = 1) }
+                }
+            }
             OutlinedButton(onClick = { showPhoto = !showPhoto }, modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(8.dp)) {
                 Text(if (showPhoto) "Ocultar foto" else "Ver foto del reporte", fontSize = 12.sp)
             }
@@ -1053,14 +1079,31 @@ private fun AdminReportCard(
 }
 
 @Composable
+private fun ClassificationQualitySummary(metrics: com.parksmart.app.data.ClassificationMetrics?) {
+    Column(Modifier.fillMaxWidth().padding(vertical = 8.dp).clip(RoundedCornerShape(8.dp)).background(Color.White).padding(12.dp)) {
+        Text("Clasificador asistido · solo apoyo", color = Ink, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
+        if (metrics == null) {
+            Text("Cargando métricas de calidad…", color = MutedInk, fontSize = 10.sp)
+        } else {
+            Text("Etiquetas revisadas por personas: ${metrics.reviewedCount} · mínimo para sugerir: ${metrics.minimumSamples}", color = MutedInk, fontSize = 10.sp)
+            val accuracy = metrics.accuracy?.let { "${(it * 100).toInt()}%" } ?: "Sin estimación"
+            val f1 = metrics.macroF1?.let { "${(it * 100).toInt()}%" } ?: "Sin estimación"
+            Text("Validación leave-one-out · ${metrics.validationSamples} muestras · exactitud $accuracy · F1 macro $f1", color = MutedInk, fontSize = 10.sp)
+            if (!metrics.ready) Text("Aún no hay ejemplos confirmados suficientes en al menos dos categorías; por ahora no se ofrecen predicciones.", color = Warning, fontSize = 10.sp)
+        }
+    }
+}
+
+@Composable
 private fun PrivacyPolicyScreen(insets: PaddingValues, onBack: () -> Unit) {
     val context = LocalContext.current
     Column(Modifier.fillMaxSize().padding(insets).verticalScroll(rememberScrollState()).padding(horizontal = 20.dp)) {
         BackHeading("Políticas de privacidad", onBack)
-        Text("ParkSmart · versión informativa v0.5", color = MutedInk, fontSize = 12.sp)
+        Text("ParkSmart · versión informativa v0.6", color = MutedInk, fontSize = 12.sp)
         Spacer(Modifier.height(14.dp))
         PolicySection("Datos tratados", "La cuenta usa nombre y correo. Cada reporte puede incluir categoría, descripción, localidad, dirección y fotografía. Las coordenadas GPS solo se adjuntan si la persona concede el permiso y solicita obtener la ubicación.")
         PolicySection("Finalidad y acceso", "Los datos se usan para recibir, ubicar, revisar y moderar reportes de estacionamiento indebido, y para mostrar mapas y estadísticas. El administrador puede ver la identidad del remitente y la foto para moderar. Los reportes con ubicación pueden ser visibles para usuarios autenticados en el mapa.")
+        PolicySection("Analítica y clasificación asistida", "Los conteos agregados por localidad y fecha son visibles para usuarios autenticados. El prototipo puede analizar localmente la descripción del reporte para sugerir una categoría usando únicamente ejemplos previamente revisados por administración. La sugerencia requiere decisión humana, no determina la moderación y no se envía a un proveedor externo.")
         PolicySection("Consentimiento y permisos", "La persona elige tomar o seleccionar la foto y enviar el reporte. El permiso de GPS es opcional y puede denegarse; en ese caso se conserva la dirección escrita manualmente. Evita incluir rostros, documentos u otros datos innecesarios. Esta versión todavía no guarda una constancia técnica de aceptación de una versión específica de la política.")
         PolicySection("Conservación de fotos", "Las fotos se guardan en el almacenamiento privado del backend. El prototipo no tiene borrado automático ni un plazo de retención configurado: permanecen hasta que una persona operadora las elimine manualmente. Antes de un uso público se debe definir y automatizar un plazo acorde con la finalidad.")
         PolicySection("Derechos y contacto", "Puedes solicitar consulta, corrección o eliminación de datos al responsable del proyecto. Esta versión académica aún no define una entidad responsable ni un canal de atención; esa información debe completarse antes de publicar la aplicación para uso real.")
@@ -1151,30 +1194,60 @@ private fun ReportRow(report: ReportSummary, compact: Boolean = false) {
 private fun StatisticsScreen(data: DashboardData, insets: PaddingValues, onBack: () -> Unit) {
     Column(modifier = Modifier.fillMaxSize().padding(insets).verticalScroll(rememberScrollState()).padding(horizontal = 20.dp)) {
         BackHeading("Estadísticas", onBack)
-        Spacer(Modifier.height(16.dp))
+        Text("Bogotá · hoy ${data.analytics.today}", color = MutedInk, fontSize = 12.sp)
+        Spacer(Modifier.height(14.dp))
         Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-            MetricTile("Reportes totales", data.totalReports.toString(), Icons.AutoMirrored.Filled.ListAlt, Modifier.weight(1f))
-            MetricTile("Zonas críticas", data.zones.size.toString(), Icons.Filled.LocationOn, Modifier.weight(1f))
+            MetricTile("Reportes hoy", data.analytics.totalReportsToday.toString(), Icons.AutoMirrored.Filled.ListAlt, Modifier.weight(1f))
+            MetricTile("Últimos 30 días", data.analytics.totalReports30Days.toString(), Icons.Filled.BarChart, Modifier.weight(1f))
         }
         Spacer(Modifier.height(20.dp))
-        Text("Reportes por zona", color = Ink, fontSize = 16.sp, fontWeight = FontWeight.Bold)
+        Text("Localidades con reportes hoy", color = Ink, fontSize = 16.sp, fontWeight = FontWeight.Bold)
         Spacer(Modifier.height(12.dp))
-        if (data.zones.isEmpty()) Text("Aún no hay datos para mostrar por zona.", color = MutedInk, fontSize = 12.sp)
-        data.zones.forEach { zone ->
-            val fraction = zone.reportCount.toFloat() / (data.zones.maxOfOrNull { it.reportCount } ?: 1)
-            Column(Modifier.fillMaxWidth().clip(RoundedCornerShape(13.dp)).background(Color.White).padding(14.dp)) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text(zone.name, modifier = Modifier.weight(1f), color = Ink, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
-                    Text("${zone.reportCount}", color = ParkGreen, fontSize = 13.sp, fontWeight = FontWeight.Bold)
-                }
-                Spacer(Modifier.height(9.dp))
-                Box(Modifier.fillMaxWidth().height(7.dp).clip(CircleShape).background(ParkGreenLight)) {
-                    Box(Modifier.fillMaxWidth(fraction).height(7.dp).clip(CircleShape).background(ParkGreen))
-                }
+        if (data.analytics.localitiesToday.isEmpty()) Text("No hay localidades con reportes hoy.", color = MutedInk, fontSize = 12.sp)
+        data.analytics.localitiesToday.forEach { ZoneRow(it); Spacer(Modifier.height(8.dp)) }
+        Spacer(Modifier.height(14.dp))
+        Text("Tendencia diaria · 30 días", color = Ink, fontSize = 16.sp, fontWeight = FontWeight.Bold)
+        Text("Cada barra representa los reportes recibidos ese día.", color = MutedInk, fontSize = 11.sp, modifier = Modifier.padding(top = 3.dp, bottom = 10.dp))
+        TrendChart(data.analytics.dailyTrend.map { it.reportCount })
+        if (data.analytics.dailyTrend.isNotEmpty()) {
+            Row(Modifier.fillMaxWidth().padding(top = 5.dp), horizontalArrangement = Arrangement.SpaceBetween) {
+                Text(data.analytics.dailyTrend.first().date, color = MutedInk, fontSize = 9.sp)
+                Text(data.analytics.dailyTrend.last().date, color = MutedInk, fontSize = 9.sp)
             }
-            Spacer(Modifier.height(8.dp))
         }
         Spacer(Modifier.height(18.dp))
+        Text("Categorías · 30 días", color = Ink, fontSize = 16.sp, fontWeight = FontWeight.Bold)
+        data.analytics.categoryCounts.forEach { StatLine(it.name, it.reportCount) }
+        Spacer(Modifier.height(16.dp))
+        Text("Estados · 30 días", color = Ink, fontSize = 16.sp, fontWeight = FontWeight.Bold)
+        data.analytics.statusCounts.forEach { StatLine(it.name.toStatusLabel(), it.reportCount) }
+        Spacer(Modifier.height(18.dp))
+    }
+}
+
+@Composable
+private fun TrendChart(values: List<Int>) {
+    val maxValue = (values.maxOrNull() ?: 0).coerceAtLeast(1)
+    Canvas(Modifier.fillMaxWidth().height(132.dp)) {
+        val gap = 3.dp.toPx()
+        val barWidth = ((size.width - gap * (values.size - 1).coerceAtLeast(0)) / values.size.coerceAtLeast(1)).coerceAtLeast(1.dp.toPx())
+        values.forEachIndexed { index, value ->
+            val barHeight = (size.height * value / maxValue).coerceAtLeast(if (value > 0) 3.dp.toPx() else 0f)
+            drawRoundRect(
+                color = if (index == values.lastIndex) ParkGreen else ParkGreen.copy(alpha = 0.42f),
+                topLeft = androidx.compose.ui.geometry.Offset(index * (barWidth + gap), size.height - barHeight),
+                size = androidx.compose.ui.geometry.Size(barWidth, barHeight),
+                cornerRadius = androidx.compose.ui.geometry.CornerRadius(barWidth / 2),
+            )
+        }
+    }
+}
+
+@Composable
+private fun StatLine(label: String, value: Int) {
+    Row(Modifier.fillMaxWidth().padding(vertical = 7.dp), verticalAlignment = Alignment.CenterVertically) {
+        Text(label, modifier = Modifier.weight(1f), color = Ink, fontSize = 12.sp)
+        Text(value.toString(), color = ParkGreen, fontSize = 12.sp, fontWeight = FontWeight.Bold)
     }
 }
 

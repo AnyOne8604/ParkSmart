@@ -4,8 +4,8 @@ from uuid import uuid4
 from fastapi import HTTPException
 
 from app.models import Report, User
-from app.routes import BOGOTA_LOCALITIES, canonical_bogota_locality, decide_report, validate_map_filters
-from app.schemas import ReportDecision
+from app.routes import BOGOTA_LOCALITIES, canonical_bogota_locality, decide_report, locality_level, review_report_category, validate_map_filters
+from app.schemas import CategoryReview, ReportDecision
 from app.security import administrator
 
 
@@ -39,6 +39,74 @@ class MapFilterTests(unittest.TestCase):
         validate_map_filters(None, "approved")
         validate_map_filters(None, "rejected")
 
+
+class LocalityAnalyticsTests(unittest.TestCase):
+    def test_priority_thresholds_match_home_summary(self):
+        self.assertEqual(locality_level(10), "Alta")
+        self.assertEqual(locality_level(5), "Media")
+        self.assertEqual(locality_level(4), "Baja")
+        self.assertEqual(locality_level(1), "Baja")
+
+
+class AssistedClassificationTests(unittest.TestCase):
+    def test_classifier_waits_for_human_reviewed_examples(self):
+        from app.classification import LabeledReport, LocalityCategoryClassifier
+
+        model = LocalityCategoryClassifier([
+            LabeledReport("carro bloquea anden", "Automóvil"),
+            LabeledReport("moto ocupa acera", "Motocicleta"),
+        ])
+        self.assertFalse(model.ready)
+        self.assertIsNone(model.predict("vehiculo sobre acera"))
+
+    def test_metrics_report_no_quality_score_without_labels(self):
+        from app.classification import classification_metrics
+
+        metrics = classification_metrics([])
+        self.assertFalse(metrics["ready"])
+        self.assertIsNone(metrics["accuracy"])
+
+    def test_classifier_uses_only_confirmed_labels_and_reports_holdout_metrics(self):
+        from app.classification import LabeledReport, LocalityCategoryClassifier, classification_metrics
+
+        examples = [LabeledReport(f"carro sedan automovil parqueado {i}", "Automóvil") for i in range(6)]
+        examples += [LabeledReport(f"moto motocicleta ciclomotor acera {i}", "Motocicleta") for i in range(6)]
+        model = LocalityCategoryClassifier(examples)
+        self.assertTrue(model.ready)
+        self.assertEqual(model.predict("carro sedan estacionado")[0], "Automóvil")
+        metrics = classification_metrics(examples)
+        self.assertEqual(metrics["validation_samples"], 12)
+        self.assertEqual(metrics["accuracy"], 1.0)
+
+    def test_admin_category_review_persists_human_label(self):
+        owner = User(id=uuid4(), name="Reportante", email="owner@example.com", password_hash="hashed", role="citizen")
+        admin = User(id=uuid4(), name="Admin", email="admin@example.com", password_hash="hashed", role="admin")
+        report = Report(
+            id=uuid4(), user_id=owner.id, user=owner, category="Otro", description="camioneta obstruye paso",
+            photo_key="report.jpg", locality="Suba", address="Calle 1 # 2-3", location=None,
+            status="received", created_at=datetime.now(timezone.utc),
+        )
+
+        class Rows:
+            def all(self):
+                return []
+
+        class FakeSession:
+            def scalar(self, _query):
+                return report
+
+            def execute(self, _query):
+                return Rows()
+
+            def commit(self):
+                pass
+
+            def refresh(self, _report):
+                pass
+
+        updated = review_report_category(str(report.id), CategoryReview(category="Automóvil"), admin, FakeSession())
+        self.assertEqual(report.reviewed_category, "Automóvil")
+        self.assertEqual(updated.reviewed_category, "Automóvil")
 
 class AdministratorRoleTests(unittest.TestCase):
     def test_citizen_cannot_access_admin_operations(self):

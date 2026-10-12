@@ -24,12 +24,37 @@ data class AdminReport(
     val userName: String,
     val userEmail: String,
     val moderatedAt: String?,
+    val reviewedCategory: String? = null,
+    val suggestedCategory: String? = null,
+    val suggestionConfidence: Double? = null,
 )
 
 data class CriticalZone(
     val name: String,
     val reportCount: Int,
     val priority: ZonePriority,
+)
+
+data class DailyReportCount(val date: String, val reportCount: Int)
+data class ReportDimensionCount(val name: String, val reportCount: Int)
+data class ReportAnalytics(
+    val today: String = "",
+    val totalReportsToday: Int = 0,
+    val totalReports30Days: Int = 0,
+    val localitiesToday: List<CriticalZone> = emptyList(),
+    val dailyTrend: List<DailyReportCount> = emptyList(),
+    val categoryCounts: List<ReportDimensionCount> = emptyList(),
+    val statusCounts: List<ReportDimensionCount> = emptyList(),
+)
+data class ClassificationMetrics(
+    val reviewedCount: Int,
+    val validationSamples: Int,
+    val ready: Boolean,
+    val minimumSamples: Int,
+    val accuracy: Double?,
+    val macroPrecision: Double?,
+    val macroRecall: Double?,
+    val macroF1: Double?,
 )
 
 enum class ZonePriority { HIGH, MEDIUM, LOW }
@@ -49,6 +74,7 @@ data class DashboardData(
     val zones: List<CriticalZone>,
     val reports: List<ReportSummary>,
     val totalReports: Int,
+    val analytics: ReportAnalytics = ReportAnalytics(),
 )
 
 data class MapReport(

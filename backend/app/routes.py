@@ -1,6 +1,7 @@
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, time, timedelta, timezone
 from pathlib import Path
 from uuid import uuid4
+from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile, status
 from fastapi.responses import FileResponse
@@ -11,8 +12,9 @@ from sqlalchemy.orm import Session
 
 from app.config import settings
 from app.database import get_db
+from app.classification import LabeledReport, LocalityCategoryClassifier, classification_metrics
 from app.models import Report, User
-from app.schemas import AdminReportOut, AuthOut, DashboardOut, NearbyReportOut, ReportDecision, ReportOut, UserCreate, UserLogin, UserOut, ZoneStatisticsOut
+from app.schemas import AdminReportOut, AnalyticsOut, AuthOut, CategoryReview, ClassificationMetricsOut, DailyTrendOut, DashboardOut, DimensionCountOut, LocalityCountOut, NearbyReportOut, ReportDecision, ReportOut, UserCreate, UserLogin, UserOut, ZoneStatisticsOut
 from app.security import administrator, create_access_token, current_user, hash_password, verify_password
 
 router = APIRouter(prefix="/api/v1")
@@ -20,6 +22,7 @@ UPLOAD_ROOT = Path(settings.upload_dir).resolve()
 MAX_PHOTO_BYTES = 10 * 1024 * 1024
 ALLOWED_TYPES = {"image/jpeg": ".jpg", "image/png": ".png", "image/webp": ".webp"}
 ALLOWED_CATEGORIES = {"Automóvil", "Motocicleta", "Otro"}
+BOGOTA_TIMEZONE = ZoneInfo("America/Bogota")
 BOGOTA_LOCALITIES = (
     "Usaquén", "Chapinero", "Santa Fe", "San Cristóbal", "Usme", "Tunjuelito", "Bosa",
     "Kennedy", "Fontibón", "Engativá", "Suba", "Barrios Unidos", "Teusaquillo",
@@ -40,7 +43,7 @@ def report_out(report: Report) -> ReportOut:
     point = to_shape(report.location) if report.location is not None else None
     return ReportOut(
         id=report.id,
-        category=report.category,
+        category=report.reviewed_category or report.category,
         description=report.description,
         photo_url=f"/api/v1/reports/{report.id}/photo",
         latitude=point.y if point else None,
@@ -52,16 +55,37 @@ def report_out(report: Report) -> ReportOut:
     )
 
 
-def admin_report_out(report: Report) -> AdminReportOut:
+def admin_report_out(report: Report, prediction: tuple[str, float] | None = None) -> AdminReportOut:
     data = report_out(report).model_dump()
     data["photo_url"] = f"/api/v1/admin/reports/{report.id}/photo"
+    if report.reviewed_category:
+        data["category"] = report.reviewed_category
     return AdminReportOut(
         **data,
         user_id=report.user_id,
         user_name=report.user.name,
         user_email=report.user.email,
         moderated_at=report.moderated_at,
+        reviewed_category=report.reviewed_category,
+        suggested_category=prediction[0] if prediction and report.reviewed_category is None else None,
+        suggestion_confidence=prediction[1] if prediction and report.reviewed_category is None else None,
     )
+
+
+def locality_level(report_count: int) -> str:
+    if report_count >= 10:
+        return "Alta"
+    if report_count >= 5:
+        return "Media"
+    return "Baja"
+
+
+def reviewed_examples(db: Session) -> list[LabeledReport]:
+    rows = db.execute(
+        select(Report.description, Report.reviewed_category)
+        .where(Report.reviewed_category.is_not(None), func.length(func.trim(Report.description)) > 0)
+    ).all()
+    return [LabeledReport(text=description or "", category=category) for description, category in rows]
 
 
 @router.post("/auth/register", response_model=AuthOut, status_code=status.HTTP_201_CREATED)
@@ -149,7 +173,87 @@ def list_all_reports(
     db: Session = Depends(get_db),
 ) -> list[AdminReportOut]:
     reports = db.scalars(select(Report).join(Report.user).order_by(Report.created_at.desc())).all()
-    return [admin_report_out(report) for report in reports]
+    classifier = LocalityCategoryClassifier(reviewed_examples(db))
+    return [admin_report_out(report, classifier.predict(report.description)) for report in reports]
+
+
+@router.post("/admin/reports/{report_id}/category-review", response_model=AdminReportOut)
+def review_report_category(
+    report_id: str,
+    review: CategoryReview,
+    admin: User = Depends(administrator),
+    db: Session = Depends(get_db),
+) -> AdminReportOut:
+    report = db.scalar(select(Report).where(Report.id == report_id))
+    if report is None:
+        raise HTTPException(status_code=404, detail="Reporte no encontrado")
+    report.reviewed_category = review.category
+    report.category_reviewed_at = datetime.now(timezone.utc)
+    db.commit()
+    db.refresh(report)
+    classifier = LocalityCategoryClassifier(reviewed_examples(db))
+    return admin_report_out(report, classifier.predict(report.description))
+
+
+@router.get("/admin/classification/metrics", response_model=ClassificationMetricsOut)
+def category_classification_metrics(
+    _: User = Depends(administrator),
+    db: Session = Depends(get_db),
+) -> ClassificationMetricsOut:
+    return ClassificationMetricsOut(**classification_metrics(reviewed_examples(db)))
+
+
+@router.get("/analytics", response_model=AnalyticsOut)
+def report_analytics(_: User = Depends(current_user), db: Session = Depends(get_db)) -> AnalyticsOut:
+    local_today = datetime.now(BOGOTA_TIMEZONE).date()
+    start_today = datetime.combine(local_today, time.min, BOGOTA_TIMEZONE).astimezone(timezone.utc)
+    start_tomorrow = datetime.combine(local_today + timedelta(days=1), time.min, BOGOTA_TIMEZONE).astimezone(timezone.utc)
+    start_30_days = start_today - timedelta(days=29)
+
+    locality_rows = db.execute(
+        select(Report.locality, func.count(Report.id).label("report_count"))
+        .where(Report.created_at >= start_today, Report.created_at < start_tomorrow)
+        .group_by(Report.locality)
+        .order_by(func.count(Report.id).desc(), Report.locality.asc())
+    ).all()
+    daily_rows = db.execute(
+        text(
+            """
+            SELECT (created_at AT TIME ZONE 'America/Bogota')::date AS report_date, COUNT(*) AS report_count
+            FROM reports
+            WHERE created_at >= :start_30_days AND created_at < :start_tomorrow
+            GROUP BY report_date
+            """
+        ),
+        {"start_30_days": start_30_days, "start_tomorrow": start_tomorrow},
+    ).all()
+    daily_counts = {day: count for day, count in daily_rows}
+    daily_trend = [
+        DailyTrendOut(date=(local_today - timedelta(days=offset)).isoformat(), report_count=daily_counts.get(local_today - timedelta(days=offset), 0))
+        for offset in reversed(range(30))
+    ]
+    effective_category = func.coalesce(Report.reviewed_category, Report.category)
+    category_rows = db.execute(
+        select(effective_category, func.count(Report.id))
+        .where(Report.created_at >= start_30_days, Report.created_at < start_tomorrow)
+        .group_by(effective_category)
+        .order_by(func.count(Report.id).desc())
+    ).all()
+    status_rows = db.execute(
+        select(Report.status, func.count(Report.id))
+        .where(Report.created_at >= start_30_days, Report.created_at < start_tomorrow)
+        .group_by(Report.status)
+        .order_by(func.count(Report.id).desc())
+    ).all()
+    return AnalyticsOut(
+        today=local_today.isoformat(),
+        total_reports_today=sum(count for _, count in locality_rows),
+        total_reports_30_days=sum(daily_counts.values()),
+        localities_today=[LocalityCountOut(locality=name, report_count=count, level=locality_level(count)) for name, count in locality_rows],
+        daily_trend=daily_trend,
+        category_counts=[DimensionCountOut(name=name, report_count=count) for name, count in category_rows],
+        status_counts=[DimensionCountOut(name=name, report_count=count) for name, count in status_rows],
+    )
 
 
 @router.patch("/admin/reports/{report_id}/decision", response_model=AdminReportOut)
@@ -209,8 +313,9 @@ def nearby_reports(
         Report.location.is_not(None),
         func.ST_DWithin(Report.location, center, radius_m),
     )
+    effective_category = func.coalesce(Report.reviewed_category, Report.category)
     if category:
-        query = query.where(Report.category == category)
+        query = query.where(effective_category == category)
     if status_filter:
         query = query.where(Report.status == status_filter)
     if since_days:
@@ -223,7 +328,7 @@ def nearby_reports(
         result.append(
             NearbyReportOut(
                 id=report.id,
-                category=report.category,
+                category=report.reviewed_category or report.category,
                 latitude=point.y,
                 longitude=point.x,
                 locality=report.locality,
@@ -251,13 +356,13 @@ def report_zone_statistics(
             WITH filtered AS (
                 SELECT
                     ST_SnapToGrid(ST_Transform(location::geometry, 3116), 1000) AS cell,
-                    category,
+                    COALESCE(reviewed_category, category) AS category,
                     status
                 FROM reports
                 WHERE location IS NOT NULL
                   AND ST_Y(location::geometry) BETWEEN 3.7 AND 5.2
                   AND ST_X(location::geometry) BETWEEN -74.5 AND -73.5
-                  AND (CAST(:category AS VARCHAR) IS NULL OR category = :category)
+                  AND (CAST(:category AS VARCHAR) IS NULL OR COALESCE(reviewed_category, category) = :category)
                   AND (CAST(:status AS VARCHAR) IS NULL OR status = :status)
                   AND (CAST(:since_time AS TIMESTAMPTZ) IS NULL OR created_at >= :since_time)
             ), grouped AS (
