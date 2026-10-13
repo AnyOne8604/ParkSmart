@@ -1,3 +1,4 @@
+// Configuración Android por módulo. Los valores locales de URL permiten probar cada computador sin editar fuentes.
 import java.util.Properties
 
 plugins {
@@ -5,13 +6,16 @@ plugins {
     id("org.jetbrains.kotlin.plugin.compose")
 }
 
+// Lee local.properties si existe; Android Studio lo genera localmente y Git lo mantiene fuera del repositorio.
 val localProperties = Properties().apply {
     val propertiesFile = rootProject.file("local.properties")
     if (propertiesFile.exists()) propertiesFile.inputStream().use { load(it) }
 }
+// Dirección REST y teselas ajustables por instalación; el emulador usa su alias del host como valor alternativo.
 val parksmartApiBaseUrl = localProperties.getProperty("parksmart.apiBaseUrl", "http://192.168.0.7:8000/")
 val parksmartMapTileUrl = localProperties.getProperty("parksmart.mapTileUrl", "https://tile.openstreetmap.org/{z}/{x}/{y}.png")
 
+// Identidad de paquete, SDKs, versión de entrega y constantes compiladas para Retrofit/MapLibre.
 android {
     namespace = "com.parksmart.app"
     compileSdk = 37

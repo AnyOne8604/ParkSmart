@@ -2,6 +2,8 @@
 
 Aplicación Android para reportar situaciones de estacionamiento indebido. La versión `v0.7.0` pule el acceso y la navegación, mejora el perfil y corrige la orientación de las fotografías.
 
+La versión `v0.7.1` agrega comentarios explicativos a lo largo del código del proyecto para describir la UI, el diseño, las funciones, el backend, Docker y las versiones en que se incorporaron sus componentes. No modifica el comportamiento de la aplicación.
+
 ## Requisitos
 
 - Android Studio Rabbit 1 (2026.2.1) o posterior compatible con AGP 9.4.

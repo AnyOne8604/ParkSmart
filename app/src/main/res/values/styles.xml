@@ -1,4 +1,5 @@
 <?xml version="1.0" encoding="utf-8"?>
+<!-- Tema base previo a Compose: define tipografía, colores de sistema y barras claras del dispositivo. -->
 <resources>
     <style name="Theme.ParkSmart" parent="android:style/Theme.Material.Light.NoActionBar">
         <item name="android:fontFamily">sans</item>

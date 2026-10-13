@@ -1,4 +1,6 @@
+# Entorno local completo: PostgreSQL/PostGIS, API FastAPI y pgAdmin para inspección (pgAdmin agregado en v0.3.0).
 services:
+  # Base relacional con extensión espacial; volumen persistente conserva usuarios/reportes entre reinicios.
   db:
     image: postgis/postgis:17-3.5
     environment:
@@ -9,12 +11,14 @@ services:
       - "5432:5432"
     volumes:
       - parksmart_db:/var/lib/postgresql/data
+    # API espera a que PostgreSQL acepte conexiones antes de aplicar migraciones e iniciar Uvicorn.
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U parksmart -d parksmart"]
       interval: 5s
       timeout: 5s
       retries: 10
 
+  # Backend REST; ADMIN_* crea/sincroniza al administrador al arrancar y secretos vienen del .env local.
   api:
     build: ./backend
     environment:
@@ -27,12 +31,14 @@ services:
       ADMIN_PASSWORD: ${ADMIN_PASSWORD:?Set ADMIN_PASSWORD in the ignored .env file}
     ports:
       - "8000:8000"
+    # Evidencia fotográfica vive fuera del contenedor en un volumen privado persistente.
     volumes:
       - parksmart_uploads:/data/uploads
     depends_on:
       db:
         condition: service_healthy
 
+  # Consola web de administración DB publicada solo en localhost, no en la red externa.
   pgadmin:
     image: dpage/pgadmin4:9.10
     environment:
@@ -47,6 +53,7 @@ services:
       db:
         condition: service_healthy
 
+# Volúmenes nombrados separan los datos de BD, fotos y configuración de pgAdmin.
 volumes:
   parksmart_db:
   parksmart_uploads:

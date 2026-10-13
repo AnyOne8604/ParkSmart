@@ -1,3 +1,4 @@
+# Modelos ORM de las tablas users y reports; reportes geográficos/admin evolucionaron entre v0.2 y v0.6.1.
 from datetime import datetime, timezone
 from uuid import UUID
 from uuid import uuid4
@@ -9,6 +10,7 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 from app.database import Base
 
 
+# Cuenta y rol persistentes; los hash reemplazan las contraseñas legibles.
 class User(Base):
     __tablename__ = "users"
 
@@ -21,6 +23,7 @@ class User(Base):
     reports: Mapped[list["Report"]] = relationship(back_populates="user", foreign_keys="Report.user_id")
 
 
+# Reporte ciudadano, evidencia, ubicación opcional PostGIS, decisión administrativa y evaluación del asistente.
 class Report(Base):
     __tablename__ = "reports"
 
@@ -31,8 +34,10 @@ class Report(Base):
     photo_key: Mapped[str] = mapped_column(String(255))
     locality: Mapped[str] = mapped_column(String(40))
     address: Mapped[str] = mapped_column(String(250))
+    # Puede ser nulo cuando la persona proporciona localidad y dirección manualmente (v0.3.0).
     location = mapped_column(Geography(geometry_type="POINT", srid=4326), nullable=True)
     status: Mapped[str] = mapped_column(String(30), default="received")
+    # Auditoría de moderación introducida en v0.5.0; campos de categoría sugerida/revisada se añadieron en v0.6.0.
     moderated_by_id: Mapped[UUID | None] = mapped_column(Uuid, ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
     moderated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     reviewed_category: Mapped[str | None] = mapped_column(String(40), nullable=True)

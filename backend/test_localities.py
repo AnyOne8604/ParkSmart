@@ -1,3 +1,4 @@
+# Pruebas unitarias sin levantar PostgreSQL: catálogo, filtros, prioridades, roles, moderación y calidad (v0.3-v0.6.1).
 import unittest
 from datetime import datetime, timezone
 from uuid import UUID, uuid4
@@ -10,6 +11,7 @@ from app.security import administrator
 
 
 class BogotaLocalityTests(unittest.TestCase):
+    # El catálogo es cerrado y la comparación tolera mayúsculas/espacios, devolviendo siempre el nombre oficial.
     def test_all_twenty_localities_are_available(self):
         self.assertEqual(len(BOGOTA_LOCALITIES), 20)
         self.assertEqual(len(set(BOGOTA_LOCALITIES)), 20)
@@ -23,6 +25,7 @@ class BogotaLocalityTests(unittest.TestCase):
 
 
 class MapFilterTests(unittest.TestCase):
+    # Evita que categorías/estados desconocidos lleguen a las consultas espaciales.
     def test_known_filters_are_accepted(self):
         validate_map_filters("Automóvil", "received")
         validate_map_filters(None, None)
@@ -41,6 +44,7 @@ class MapFilterTests(unittest.TestCase):
 
 
 class LocalityAnalyticsTests(unittest.TestCase):
+    # Verifica los cortes Alta/Media/Baja que también muestra Inicio.
     def test_priority_thresholds_match_home_summary(self):
         self.assertEqual(locality_level(10), "Alta")
         self.assertEqual(locality_level(5), "Media")
@@ -49,6 +53,7 @@ class LocalityAnalyticsTests(unittest.TestCase):
 
 
 class AssistedClassificationTests(unittest.TestCase):
+    # Comprueba que el asistente espera etiquetas humanas y que no publique métricas con muestras insuficientes.
     def test_classifier_waits_for_human_reviewed_examples(self):
         from app.classification import LabeledReport, LocalityCategoryClassifier
 
@@ -137,6 +142,7 @@ class AssistedClassificationTests(unittest.TestCase):
         self.assertEqual(updated.reviewed_category, "Automóvil")
 
 class AdministratorRoleTests(unittest.TestCase):
+    # Comprueba separación ciudadano/admin y registro de decisiones de moderación.
     def test_citizen_cannot_access_admin_operations(self):
         citizen = User(name="Ciudadano", email="citizen@example.com", password_hash="hashed", role="citizen")
         with self.assertRaises(HTTPException) as raised:
@@ -178,5 +184,6 @@ class AdministratorRoleTests(unittest.TestCase):
         self.assertIsNotNone(report.moderated_at)
 
 
+# Permite ejecutar estas pruebas directamente con python -m unittest desde el contenedor o entorno backend.
 if __name__ == "__main__":
     unittest.main()

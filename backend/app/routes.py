@@ -1,3 +1,4 @@
+# Endpoints REST de autenticación, reportes, administración, analítica y consulta espacial (API v0.2-v0.7).
 from datetime import date, datetime, time, timedelta, timezone
 from pathlib import Path
 from uuid import uuid4
@@ -24,6 +25,7 @@ from app.models import Report, User
 from app.schemas import AdminReportOut, AnalyticsOut, AuthOut, CategoryReview, CategorySuggestionOut, ClassificationMetricsOut, DailyTrendOut, DashboardOut, DimensionCountOut, LocalityCountOut, NearbyReportOut, PeriodComparisonOut, ReportDecision, ReportOut, UserCreate, UserLogin, UserOut, ZoneStatisticsOut
 from app.security import administrator, create_access_token, current_user, hash_password, verify_password
 
+# Constantes de validación y nombres canónicos que comparten creación de reportes y filtros.
 router = APIRouter(prefix="/api/v1")
 UPLOAD_ROOT = Path(settings.upload_dir).resolve()
 MAX_PHOTO_BYTES = 10 * 1024 * 1024
@@ -38,14 +40,17 @@ BOGOTA_LOCALITIES = (
 )
 
 
+# Devuelve el nombre oficial de localidad o None si el texto no pertenece al catálogo de Bogotá.
 def canonical_bogota_locality(value: str) -> str | None:
     return next((item for item in BOGOTA_LOCALITIES if item.casefold() == value.strip().casefold()), None)
 
 
+# Centraliza la respuesta de autenticación y la creación del token Bearer.
 def auth_response(user: User) -> AuthOut:
     return AuthOut(access_token=create_access_token(user.id), user=user)
 
 
+# Serializa un reporte ciudadano; convierte geometría PostGIS a latitud/longitud y usa categoría revisada si existe.
 def report_out(report: Report) -> ReportOut:
     point = to_shape(report.location) if report.location is not None else None
     return ReportOut(
@@ -62,6 +67,7 @@ def report_out(report: Report) -> ReportOut:
     )
 
 
+# Amplía la respuesta con identidad y datos de moderación, disponible solo para endpoints administrativos.
 def admin_report_out(report: Report) -> AdminReportOut:
     data = report_out(report).model_dump()
     data["photo_url"] = f"/api/v1/admin/reports/{report.id}/photo"
@@ -80,6 +86,7 @@ def admin_report_out(report: Report) -> AdminReportOut:
     )
 
 
+# Aplica los umbrales de criticidad del ranking diario por localidad definidos en v0.6.0.
 def locality_level(report_count: int) -> str:
     if report_count >= 10:
         return "Alta"
@@ -88,6 +95,7 @@ def locality_level(report_count: int) -> str:
     return "Baja"
 
 
+# Carga solo descripciones con categoría confirmada por revisión humana para entrenar/evaluar el clasificador.
 def reviewed_examples(db: Session) -> list[LabeledReport]:
     rows = db.execute(
         select(Report.id, Report.description, Report.reviewed_category)
@@ -96,10 +104,12 @@ def reviewed_examples(db: Session) -> list[LabeledReport]:
     return [LabeledReport(text=description or "", category=category, report_id=report_id) for report_id, description, category in rows]
 
 
+# Excluye del entrenamiento los reportes asignados a la partición reservada estable (calidad v0.6.1).
 def training_examples(db: Session) -> list[LabeledReport]:
     return [example for example in reviewed_examples(db) if not is_validation_report(example.report_id)]
 
 
+# Recupera predicciones guardadas antes de la revisión y sus etiquetas finales para evaluación no filtrada.
 def heldout_evaluations(db: Session) -> list[EvaluatedReport]:
     rows = db.execute(
         select(Report.id, Report.category, Report.suggested_category, Report.reviewed_category)
@@ -118,6 +128,7 @@ def heldout_evaluations(db: Session) -> list[EvaluatedReport]:
     ]
 
 
+# Registra una cuenta ciudadana con correo único y contraseña hasheada, y devuelve sesión autenticada (v0.2.0).
 @router.post("/auth/register", response_model=AuthOut, status_code=status.HTTP_201_CREATED)
 def register(payload: UserCreate, db: Session = Depends(get_db)) -> AuthOut:
     email = str(payload.email).lower()
@@ -130,6 +141,7 @@ def register(payload: UserCreate, db: Session = Depends(get_db)) -> AuthOut:
     return auth_response(user)
 
 
+# Valida correo y contraseña contra el hash persistido e inicia sesión con JWT.
 @router.post("/auth/login", response_model=AuthOut)
 def login(payload: UserLogin, db: Session = Depends(get_db)) -> AuthOut:
     user = db.scalar(select(User).where(User.email == str(payload.email).lower()))
@@ -138,11 +150,13 @@ def login(payload: UserLogin, db: Session = Depends(get_db)) -> AuthOut:
     return auth_response(user)
 
 
+# Retorna la identidad asociada al token actual para restaurar/consultar el perfil.
 @router.get("/auth/me", response_model=UserOut)
 def me(user: User = Depends(current_user)) -> User:
     return user
 
 
+# Recibe foto, localidad y dirección; GPS es opcional y el reporte queda inicialmente recibido (v0.3.0/v0.5.0).
 @router.post("/reports", response_model=ReportOut, status_code=status.HTTP_201_CREATED)
 async def create_report(
     category: str = Form(min_length=2, max_length=40),
@@ -155,6 +169,7 @@ async def create_report(
     user: User = Depends(current_user),
     db: Session = Depends(get_db),
 ) -> ReportOut:
+    # Verifica tipo, categoría, localidad, coordenadas y tamaño antes de almacenar archivo o fila.
     extension = ALLOWED_TYPES.get(photo.content_type or "")
     if extension is None:
         raise HTTPException(status_code=415, detail="Usa una foto JPEG, PNG o WebP")
@@ -191,12 +206,14 @@ async def create_report(
     return report_out(report)
 
 
+# Historial del usuario autenticado, ordenado del más reciente al más antiguo.
 @router.get("/reports", response_model=list[ReportOut])
 def list_reports(user: User = Depends(current_user), db: Session = Depends(get_db)) -> list[ReportOut]:
     reports = db.scalars(select(Report).where(Report.user_id == user.id).order_by(Report.created_at.desc())).all()
     return [report_out(report) for report in reports]
 
 
+# Lista global para Control; Depends(administrator) protege datos personales y decisiones (v0.5.0).
 @router.get("/admin/reports", response_model=list[AdminReportOut])
 def list_all_reports(
     _: User = Depends(administrator),
@@ -206,6 +223,7 @@ def list_all_reports(
     return [admin_report_out(report) for report in reports]
 
 
+# Genera y guarda una sugerencia previa a revisión; no cambia categoría ni decisión automáticamente (v0.6.0).
 @router.post("/admin/reports/{report_id}/classification-suggestion", response_model=CategorySuggestionOut)
 def suggest_report_category(
     report_id: str,
@@ -233,6 +251,7 @@ def suggest_report_category(
     return CategorySuggestionOut(**admin_report_out(report).model_dump())
 
 
+# Persiste la categoría confirmada/corregida por administración para auditoría y datos etiquetados (v0.6.0).
 @router.post("/admin/reports/{report_id}/category-review", response_model=AdminReportOut)
 def review_report_category(
     report_id: str,
@@ -250,6 +269,7 @@ def review_report_category(
     return admin_report_out(report)
 
 
+# Entrega métricas del clasificador y la categoría inicial calculadas sobre la partición reservada (v0.6.1).
 @router.get("/admin/classification/metrics", response_model=ClassificationMetricsOut)
 def category_classification_metrics(
     _: User = Depends(administrator),
@@ -258,14 +278,17 @@ def category_classification_metrics(
     return ClassificationMetricsOut(**classification_metrics(reviewed_examples(db), heldout_evaluations(db)))
 
 
+# Calcula resúmenes locales, serie diaria bogotana, cortes y comparaciones 7/30 días para usuarios autenticados (v0.6.0).
 @router.get("/analytics", response_model=AnalyticsOut)
 def report_analytics(_: User = Depends(current_user), db: Session = Depends(get_db)) -> AnalyticsOut:
+    # Define límites por calendario Bogotá para “hoy” y por ventanas UTC para comparaciones móviles.
     now_utc = datetime.now(timezone.utc)
     local_today = datetime.now(BOGOTA_TIMEZONE).date()
     start_today = datetime.combine(local_today, time.min, BOGOTA_TIMEZONE).astimezone(timezone.utc)
     start_tomorrow = datetime.combine(local_today + timedelta(days=1), time.min, BOGOTA_TIMEZONE).astimezone(timezone.utc)
     start_30_days = start_today - timedelta(days=29)
 
+    # Agregados de localidades solo incluyen las que tienen reportes; tendencias sí rellenan días con cero.
     locality_rows = db.execute(
         select(Report.locality, func.count(Report.id).label("report_count"))
         .where(Report.created_at >= start_today, Report.created_at < start_tomorrow)
@@ -302,6 +325,7 @@ def report_analytics(_: User = Depends(current_user), db: Session = Depends(get_
         .order_by(func.count(Report.id).desc())
     ).all()
 
+    # Compara ventanas de igual duración y evita calcular porcentaje si el periodo anterior fue cero.
     def period_comparison(days: int) -> PeriodComparisonOut:
         current_start = now_utc - timedelta(days=days)
         previous_start = current_start - timedelta(days=days)
@@ -331,6 +355,7 @@ def report_analytics(_: User = Depends(current_user), db: Session = Depends(get_
     )
 
 
+# Guarda aprobación/rechazo, administrador responsable y fecha de moderación (v0.5.0).
 @router.patch("/admin/reports/{report_id}/decision", response_model=AdminReportOut)
 def decide_report(
     report_id: str,
@@ -349,6 +374,7 @@ def decide_report(
     return admin_report_out(report)
 
 
+# Entrega la foto solo a administración y valida que la ruta final permanezca dentro del directorio de carga.
 @router.get("/admin/reports/{report_id}/photo")
 def admin_report_photo(
     report_id: str,
@@ -364,6 +390,7 @@ def admin_report_photo(
     return FileResponse(path)
 
 
+# Rechaza filtros no reconocidos antes de interpolarlos en consultas de mapa.
 def validate_map_filters(category: str | None, status_filter: str | None) -> None:
     if category is not None and category not in ALLOWED_CATEGORIES:
         raise HTTPException(status_code=422, detail="Categoría de reporte no válida")
@@ -371,6 +398,7 @@ def validate_map_filters(category: str | None, status_filter: str | None) -> Non
         raise HTTPException(status_code=422, detail="Estado de reporte no válido")
 
 
+# Consulta reportes con coordenadas dentro de un radio y aplica filtros/orden por distancia (mapa v0.4.0).
 @router.get("/reports/nearby", response_model=list[NearbyReportOut])
 def nearby_reports(
     latitude: float = Query(4.7110, ge=-90, le=90),
@@ -383,6 +411,7 @@ def nearby_reports(
     db: Session = Depends(get_db),
 ) -> list[NearbyReportOut]:
     validate_map_filters(category, status_filter)
+    # Construye el punto del centro y delega la distancia geodésica al motor PostGIS.
     center = cast(func.ST_SetSRID(func.ST_MakePoint(longitude, latitude), 4326), Geography(geometry_type="POINT", srid=4326))
     query = select(Report).where(
         Report.location.is_not(None),
@@ -415,6 +444,7 @@ def nearby_reports(
     return result
 
 
+# Agrupa los reportes en celdas métricas de 1 km para visualizar concentración sin afirmar límites oficiales.
 @router.get("/reports/zones", response_model=ZoneStatisticsOut)
 def report_zone_statistics(
     category: str | None = Query(default=None, max_length=40),
@@ -425,6 +455,7 @@ def report_zone_statistics(
 ) -> ZoneStatisticsOut:
     validate_map_filters(category, status_filter)
     since_time = datetime.now(timezone.utc) - timedelta(days=since_days) if since_days else None
+    # Proyecta puntos a EPSG:3116, agrupa con PostGIS y calcula centroides para ubicar cada celda en el mapa.
     rows = db.execute(
         text(
             """
@@ -474,6 +505,7 @@ def report_zone_statistics(
     )
 
 
+# Permite al propio autor recuperar su foto, sin exponer fotos ajenas.
 @router.get("/reports/{report_id}/photo")
 def report_photo(report_id: str, user: User = Depends(current_user), db: Session = Depends(get_db)) -> FileResponse:
     report = db.scalar(select(Report).where(Report.id == report_id, Report.user_id == user.id))
@@ -485,6 +517,7 @@ def report_photo(report_id: str, user: User = Depends(current_user), db: Session
     return FileResponse(path)
 
 
+# Devuelve el resumen e historial reciente del usuario, junto con su total histórico de reportes.
 @router.get("/dashboard", response_model=DashboardOut)
 def dashboard(user: User = Depends(current_user), db: Session = Depends(get_db)) -> DashboardOut:
     reports = db.scalars(select(Report).where(Report.user_id == user.id).order_by(Report.created_at.desc()).limit(20)).all()

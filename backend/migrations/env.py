@@ -1,3 +1,4 @@
+# Puente de Alembic: carga modelos/metadatos y URL de la configuración del backend para migrar PostgreSQL.
 from logging.config import fileConfig
 
 from alembic import context
@@ -14,12 +15,14 @@ if config.config_file_name:
 target_metadata = Base.metadata
 
 
+# Genera migraciones SQL sin abrir conexión directa, útil para revisar o entregar scripts.
 def run_migrations_offline() -> None:
     context.configure(url=settings.database_url, target_metadata=target_metadata, literal_binds=True, dialect_opts={"paramstyle": "named"})
     with context.begin_transaction():
         context.run_migrations()
 
 
+# Ejecuta migraciones dentro de una conexión real usando el motor configurado por SQLAlchemy.
 def run_migrations_online() -> None:
     connectable = engine_from_config(config.get_section(config.config_ini_section, {}), prefix="sqlalchemy.", poolclass=pool.NullPool)
     with connectable.connect() as connection:

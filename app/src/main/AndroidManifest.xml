@@ -1,9 +1,11 @@
 <?xml version="1.0" encoding="utf-8"?>
+<!-- Permisos declarados para REST, cámara y GPS bajo demanda; app y FileProvider, icono adaptativo desde v0.2/v0.7. -->
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.CAMERA" />
     <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
     <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
+    <!-- Configuración visible de la app; HTTP claro es solo para desarrollo local con Docker. -->
     <application
         android:allowBackup="true"
         android:label="ParkSmart"
@@ -12,6 +14,7 @@
         android:roundIcon="@mipmap/ic_launcher_round"
         android:supportsRtl="true"
         android:theme="@style/Theme.ParkSmart">
+        <!-- Actividad lanzadora de Compose; el filtro MAIN/LAUNCHER crea el acceso en el escritorio Android. -->
         <activity
             android:name=".MainActivity"
             android:exported="true">
@@ -20,6 +23,7 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
+        <!-- Comparte URI temporal de archivos de cámara sin exponer rutas internas del dispositivo. -->
         <provider
             android:name="androidx.core.content.FileProvider"
             android:authorities="${applicationId}.fileprovider"

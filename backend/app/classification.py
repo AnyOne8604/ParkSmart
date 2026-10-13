@@ -1,11 +1,14 @@
 """Local Naive Bayes helper with a stable, report-level evaluation split."""
 
+# Clasificador Naive Bayes local introducido en v0.6.0 y evaluación separada endurecida en v0.6.1.
+
 from collections import Counter, defaultdict
 from dataclasses import dataclass
 import math
 import re
 from uuid import UUID
 
+# Umbrales de muestra, partición estable por UUID y nombre de versión del modelo.
 MINIMUM_TRAINING_SAMPLES = 12
 MINIMUM_VALIDATION_SAMPLES = 15
 MINIMUM_VALIDATION_PER_CLASS = 3
@@ -14,6 +17,7 @@ CLASSIFIER_VERSION = "naive-bayes-v1"
 TOKEN_PATTERN = re.compile(r"[a-záéíóúüñ0-9]+", re.IGNORECASE)
 
 
+# Ejemplo humano revisado para entrenamiento y resultado reservado para medir modelo vs. línea base.
 @dataclass(frozen=True)
 class LabeledReport:
     text: str
@@ -28,16 +32,20 @@ class EvaluatedReport:
     initial_category: str
 
 
+# Asigna cada reporte de forma determinista a entrenamiento o validación, sin moverlo entre consultas.
 def is_validation_report(report_id: UUID) -> bool:
     """Assign each report permanently to either train or validation by its ID."""
     return report_id.int % VALIDATION_BUCKETS == 0
 
 
+# Normaliza el texto y extrae tokens en español/números para el clasificador de bolsa de palabras.
 def _tokens(value: str) -> list[str]:
     return TOKEN_PATTERN.findall(value.casefold())
 
 
+# Naive Bayes multinomial sencillo: sugiere categoría usando solo descripciones con etiqueta humana.
 class LocalityCategoryClassifier:
+    # Prepara conteos y vocabulario; si faltan ejemplos/clases no habilita predicciones.
     def __init__(self, examples: list[LabeledReport], minimum_samples: int = MINIMUM_TRAINING_SAMPLES):
         self.examples = examples
         self.class_counts = Counter(example.category for example in examples)
@@ -52,6 +60,7 @@ class LocalityCategoryClassifier:
         if self.ready:
             self._fit(examples)
 
+    # Aprende frecuencias de palabras por clase con suavizado posterior en la fase de predicción.
     def _fit(self, examples: list[LabeledReport]) -> None:
         for example in examples:
             words = _tokens(example.text)
@@ -59,6 +68,7 @@ class LocalityCategoryClassifier:
             self.word_counts[example.category].update(words)
             self.word_totals[example.category] += len(words)
 
+    # Calcula la clase más probable y confianza normalizada; devuelve None si texto/modelo no son utilizables.
     def predict(self, value: str) -> tuple[str, float] | None:
         if not self.ready or not self.vocabulary:
             return None
@@ -80,6 +90,7 @@ class LocalityCategoryClassifier:
         return label, probabilities[label] / normalizer
 
 
+# Calcula exactitud, precision, recall y F1 para sugerencia y etiqueta inicial en los mismos casos reservados.
 def classification_metrics(
     reviewed: list[LabeledReport],
     evaluated: list[EvaluatedReport],

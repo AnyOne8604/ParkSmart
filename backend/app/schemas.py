@@ -1,9 +1,11 @@
+# Esquemas Pydantic: validan entradas HTTP y definen las respuestas estables de la API v1.
 from datetime import datetime
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, EmailStr, Field
 
 
+# Validación de datos de registro/login y forma pública de la identidad/autenticación (v0.2.0).
 class UserCreate(BaseModel):
     name: str = Field(min_length=2, max_length=120)
     email: EmailStr
@@ -29,6 +31,7 @@ class AuthOut(BaseModel):
     user: UserOut
 
 
+# Contratos de reportes e indicadores; localidad/dirección y métricas se ampliaron en v0.3-v0.6.
 class ReportOut(BaseModel):
     id: UUID
     category: str
@@ -82,6 +85,7 @@ class AnalyticsOut(BaseModel):
     comparison_30_days: PeriodComparisonOut
 
 
+# Respuestas de clasificación, evaluación por clase, mapa y estadísticas espaciales (v0.4-v0.6.1).
 class ClassificationClassMetricsOut(BaseModel):
     samples: int
     precision: float | None
@@ -140,6 +144,7 @@ class ZoneStatisticsOut(BaseModel):
     zones: list[ZoneStatisticOut]
 
 
+# Cuerpos administrativos: limitan las categorías y decisiones aceptadas por las rutas.
 class ReportDecision(BaseModel):
     status: str = Field(pattern="^(approved|rejected)$")
 

@@ -1,3 +1,4 @@
+# Aplicación ASGI: registra rutas, CORS, inicialización administrativa y endpoint de salud (API actual v0.7.0).
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
@@ -11,6 +12,7 @@ from app.routes import router
 from app.security import hash_password
 
 
+# Crea la cuenta administrativa desde variables de entorno o sincroniza su rol/credenciales al iniciar.
 def ensure_admin_account() -> None:
     if len(settings.admin_password) < 8:
         raise RuntimeError("ADMIN_PASSWORD debe configurarse con al menos 8 caracteres")
@@ -31,12 +33,14 @@ def ensure_admin_account() -> None:
         db.commit()
 
 
+# Ciclo de vida FastAPI: valida/garantiza el administrador antes de aceptar peticiones.
 @asynccontextmanager
 async def lifespan(_: FastAPI):
     ensure_admin_account()
     yield
 
 
+# Configuración del servicio REST y política CORS; los permisos finos se aplican además en cada ruta.
 app = FastAPI(title="ParkSmart API", version="0.7.0", description="API REST de reportes geoespaciales ciudadanos ParkSmart.", lifespan=lifespan)
 app.add_middleware(
     CORSMiddleware,
@@ -48,6 +52,7 @@ app.add_middleware(
 app.include_router(router)
 
 
+# Comprueba conectividad real con PostgreSQL para diagnóstico local/contenerizado.
 @app.get("/health")
 def health() -> dict[str, str]:
     with engine.connect() as connection:

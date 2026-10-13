@@ -1,5 +1,7 @@
 package com.parksmart.app.ui
 
+// Presentación Android de ParkSmart en Jetpack Compose/Material 3; la UI original nació en v0.1.0 y evoluciona por versión.
+
 import android.Manifest
 import android.content.pm.PackageManager
 import android.graphics.Bitmap
@@ -168,10 +170,12 @@ import org.maplibre.android.style.layers.PropertyFactory.textSize
 import org.maplibre.android.style.expressions.Expression
 import org.maplibre.android.module.http.HttpRequestUtil
 
+// Destinos internos para controlar navegación sin introducir navegación de servidor ni dependencias extra.
 private enum class AppRoute {
     LOGIN, HOME, REPORT, MAP, PROFILE, PERSONAL_INFO, REPORTS, STATISTICS, ADMIN, PRIVACY
 }
 
+// Datos de cada botón persistente de la barra inferior.
 private data class MainTab(
     val route: AppRoute,
     val label: String,
@@ -179,8 +183,10 @@ private data class MainTab(
 )
 
 @Composable
+// Raíz de la experiencia: crea repositorio/ViewModel, decide sesión, ruta actual y barra de navegación.
 fun ParkSmartApp() {
     val context = LocalContext.current
+    // Se comparte una instancia de repositorio durante la vida de esta composición.
     val repository = remember { ParkSmartApiRepository(context.applicationContext) }
     val factory = remember(repository) {
         object : ViewModelProvider.Factory {
@@ -194,6 +200,7 @@ fun ParkSmartApp() {
     var routeName by rememberSaveable { mutableStateOf(AppRoute.LOGIN.name) }
     val route = AppRoute.valueOf(routeName)
     val dashboard = state.dashboard ?: DashboardData(state.user ?: com.parksmart.app.data.ParkSmartUser("Ciudadano", "", "Ciudadano", "PS"), emptyList(), emptyList(), 0)
+    // Una sesión válida abre Inicio; entrar a Control dispara la carga administrativa bajo rol autorizado.
     LaunchedEffect(state.user) {
         if (state.user != null) routeName = AppRoute.HOME.name
     }
@@ -226,6 +233,7 @@ fun ParkSmartApp() {
         MainTab(AppRoute.PROFILE, "Perfil", Icons.Filled.Person),
     )
 
+    // Scaffold común que conserva las cuatro pestañas y delega cada destino a su pantalla especializada.
     Scaffold(
         containerColor = AppCanvas,
         bottomBar = {
@@ -270,6 +278,7 @@ fun ParkSmartApp() {
 }
 
 @Composable
+// Acceso y registro manuales con fondo de Bogotá, logo, validación visual y estado de carga (diseño v0.7.0).
 private fun LoginScreen(
     onLogin: (String, String) -> Unit,
     onRegister: (String, String, String) -> Unit,
@@ -282,6 +291,7 @@ private fun LoginScreen(
     var password by rememberSaveable { mutableStateOf("") }
     var passwordVisible by rememberSaveable { mutableStateOf(false) }
 
+    // El fondo ocupa la pantalla; el formulario se desplaza y ajusta su posición al tamaño disponible/teclado.
     BoxWithConstraints(Modifier.fillMaxSize()) {
         Image(
             painter = painterResource(R.drawable.login_background),
@@ -386,6 +396,7 @@ private fun LoginScreen(
 }
 
 @Composable
+// Mantiene contraste coherente de los campos de correo/contraseña sobre el fondo ilustrado.
 private fun LoginFieldColors() = OutlinedTextFieldDefaults.colors(
     focusedBorderColor = ParkGreen,
     unfocusedBorderColor = Line,
@@ -396,6 +407,7 @@ private fun LoginFieldColors() = OutlinedTextFieldDefaults.colors(
 )
 
 @Composable
+// Inicio: saludo, accesos frecuentes, navegación al perfil y resumen de localidades críticas del día.
 private fun HomeScreen(data: DashboardData, insets: PaddingValues, isAdmin: Boolean, onNavigate: (AppRoute) -> Unit) {
     Column(
         modifier = Modifier
@@ -490,6 +502,7 @@ private fun HomeScreen(data: DashboardData, insets: PaddingValues, isAdmin: Bool
 }
 
 @Composable
+// Botón de acceso rápido reutilizable para reportes, mapa o estadísticas.
 private fun QuickAction(label: String, icon: ImageVector, modifier: Modifier = Modifier, onClick: () -> Unit) {
     Column(
         modifier = modifier
@@ -508,6 +521,7 @@ private fun QuickAction(label: String, icon: ImageVector, modifier: Modifier = M
 }
 
 @Composable
+// Fila de zona/localidad que presenta nivel de prioridad con color y conteo.
 private fun ZoneRow(zone: CriticalZone) {
     val (accent, tag, tagBg) = when (zone.priority) {
         ZonePriority.HIGH -> Triple(Danger, "Alta", Color(0xFFFFE9E9))
@@ -533,6 +547,7 @@ private fun ZoneRow(zone: CriticalZone) {
 }
 
 @Composable
+// Formulario ciudadano para evidencia, GPS opcional, localidad, dirección, vehículo y envío (v0.2-v0.3; ajustes v0.7).
 private fun ReportScreen(
     insets: PaddingValues,
     busy: Boolean,
@@ -551,6 +566,7 @@ private fun ReportScreen(
     var localityMenuExpanded by remember { mutableStateOf(false) }
     var captureFile by remember { mutableStateOf<File?>(null) }
 
+    // Lee EXIF, reduce el tamaño para la vista previa y normaliza la orientación (corrección v0.7.0).
     fun decodePreview(uri: Uri): Bitmap? {
         val orientation = context.contentResolver.openInputStream(uri)?.use(::readPhotoOrientation)
             ?: android.media.ExifInterface.ORIENTATION_NORMAL
@@ -564,6 +580,7 @@ private fun ReportScreen(
         return bitmap.withExifOrientation(orientation)
     }
 
+    // Convierte la selección/captura a JPEG ya orientado y lo guarda temporalmente para subirlo a la API.
     fun saveJpeg(uri: Uri) {
         runCatching {
             val bitmap = decodePreview(uri) ?: error("No se pudo abrir la imagen")
@@ -574,6 +591,7 @@ private fun ReportScreen(
         }
     }
 
+    // Obtiene ubicación de primer plano solo después de consentimiento del permiso solicitado por la persona.
     fun requestCurrentLocation() {
         try {
             LocationServices.getFusedLocationProviderClient(context)
@@ -584,6 +602,7 @@ private fun ReportScreen(
         } catch (_: SecurityException) { }
     }
 
+    // Lanzadores del sistema para cámara, selector de fotos y solicitud puntual de permisos (v0.2.0).
     val takePicture = rememberLauncherForActivityResult(ActivityResultContracts.TakePicture()) { saved ->
         if (saved) captureFile?.let { file -> saveJpeg(Uri.fromFile(file)) }
     }
@@ -599,6 +618,7 @@ private fun ReportScreen(
         if (permissions.values.any { it }) requestCurrentLocation()
     }
 
+    // Formulario desplazable para que controles y teclado funcionen también en pantallas pequeñas.
     Column(modifier = Modifier.fillMaxSize().padding(insets).verticalScroll(rememberScrollState()).padding(horizontal = 20.dp)) {
         ScreenHeading("Nuevo reporte", "Agrega evidencia y señala el lugar")
         Spacer(Modifier.height(18.dp))
@@ -697,6 +717,7 @@ private fun ReportScreen(
 }
 
 @Composable
+// Selector visual de tipo de vehículo; el icono cambia para auto, moto y otros/bus (refinamiento v0.7.0).
 private fun VehicleChoice(label: String, icon: ImageVector, modifier: Modifier, selected: Boolean, onClick: () -> Unit) {
     Column(
         modifier = modifier.height(78.dp).clip(RoundedCornerShape(12.dp))
@@ -712,6 +733,7 @@ private fun VehicleChoice(label: String, icon: ImageVector, modifier: Modifier, 
 }
 
 @Composable
+// Mapa de reportes geolocalizados con filtros, selección de marcador y agregados por zona PostGIS (v0.4.0).
 private fun MapScreen(
     data: MapData,
     loading: Boolean,
@@ -804,6 +826,7 @@ private fun MapScreen(
     }
 }
 
+// Convierte las etiquetas de filtros en los códigos estables que espera la API.
 private fun String.toStatusCode(): String? = when (this) {
     "Recibido" -> "received"
     "Aprobado" -> "approved"
@@ -813,6 +836,7 @@ private fun String.toStatusCode(): String? = when (this) {
     else -> null
 }
 
+// Presenta códigos internos del backend con etiquetas en español para la UI.
 private fun String.toStatusLabel(): String = when (this) {
     "received" -> "Recibido"
     "approved" -> "Aprobado"
@@ -823,6 +847,7 @@ private fun String.toStatusLabel(): String = when (this) {
 }
 
 @Composable
+// Menú compacto reutilizable para categoría, estado y ventana temporal del mapa.
 private fun MapFilter(label: String, options: List<String>, onSelect: (String) -> Unit, modifier: Modifier = Modifier) {
     var expanded by remember { mutableStateOf(false) }
     Box(modifier) {
@@ -838,6 +863,7 @@ private fun MapFilter(label: String, options: List<String>, onSelect: (String) -
 }
 
 @Composable
+// Tarjeta resumida que aparece al seleccionar un marcador en el mapa.
 private fun SelectedMapReport(report: MapReport) {
     Column(Modifier.fillMaxWidth().clip(RoundedCornerShape(8.dp)).background(Color.White).padding(12.dp)) {
         Text("${report.category} · ${report.status.toStatusLabel()}", fontSize = 12.sp, fontWeight = FontWeight.SemiBold, color = Ink)
@@ -847,6 +873,7 @@ private fun SelectedMapReport(report: MapReport) {
 }
 
 @Composable
+// Adaptador AndroidView que aloja MapLibre, administra ciclo de vida, marcadores agrupados y selección.
 private fun LiveReportsMap(
     reports: List<MapReport>,
     recenterToken: Int,
@@ -857,6 +884,7 @@ private fun LiveReportsMap(
     val lifecycleOwner = LocalLifecycleOwner.current
     val currentOnCenterChanged by rememberUpdatedState(onCenterChanged)
     val currentOnReportSelected by rememberUpdatedState(onReportSelected)
+    // Inicializa una sola vista MapLibre y un cliente de teselas con caché local para reducir descargas repetidas.
     val mapView = remember {
         MapLibre.getInstance(context.applicationContext)
         HttpRequestUtil.setOkHttpClient(
@@ -955,11 +983,13 @@ private fun LiveReportsMap(
     }
 }
 
+// Estilo raster MapLibre: usa URL compilada configurable y atribución visible a OpenStreetMap.
 private const val OSM_RASTER_STYLE = """
     {"version":8,"sources":{"osm":{"type":"raster","tiles":["${BuildConfig.MAP_TILE_URL}"],"tileSize":256,"attribution":"© OpenStreetMap contributors"}},"layers":[{"id":"background","type":"background","paint":{"background-color":"#e9efea"}},{"id":"osm-raster","type":"raster","source":"osm","paint":{"raster-opacity":1.0}}]}
 """
 
 @Composable
+// Perfil de la cuenta, con accesos a información personal, privacidad y cierre de sesión.
 private fun ProfileScreen(data: DashboardData, insets: PaddingValues, onPersonalInfo: () -> Unit, onPrivacy: () -> Unit, onSignOut: () -> Unit) {
     Column(
         modifier = Modifier.fillMaxSize().padding(insets).verticalScroll(rememberScrollState()).padding(horizontal = 20.dp),
@@ -1000,6 +1030,7 @@ private fun ProfileScreen(data: DashboardData, insets: PaddingValues, onPersonal
 }
 
 @Composable
+// Consulta los datos de cuenta y el total de reportes asociado (incorporado en v0.7.0).
 private fun PersonalInformationScreen(data: DashboardData, insets: PaddingValues, onBack: () -> Unit) {
     Column(
         modifier = Modifier.fillMaxSize().padding(insets).verticalScroll(rememberScrollState()).padding(horizontal = 20.dp),
@@ -1013,6 +1044,7 @@ private fun PersonalInformationScreen(data: DashboardData, insets: PaddingValues
 }
 
 @Composable
+// Par de etiqueta/valor usado para mantener alineada la ficha de información personal.
 private fun PersonalInfoRow(label: String, value: String) {
     Column(
         Modifier.fillMaxWidth().padding(vertical = 4.dp).clip(RoundedCornerShape(10.dp)).background(Color.White).padding(15.dp),
@@ -1024,6 +1056,7 @@ private fun PersonalInfoRow(label: String, value: String) {
 }
 
 @Composable
+// Elemento de menú de perfil con icono, texto y acción accesible.
 private fun ProfileItem(icon: ImageVector, label: String, onClick: () -> Unit) {
     Row(
         modifier = Modifier.fillMaxWidth().padding(vertical = 3.dp).clip(RoundedCornerShape(12.dp)).background(Color.White).clickable(onClick = onClick).padding(horizontal = 14.dp, vertical = 15.dp),
@@ -1037,6 +1070,7 @@ private fun ProfileItem(icon: ImageVector, label: String, onClick: () -> Unit) {
 }
 
 @Composable
+// Panel exclusivo para revisión administrativa de reportes y sugerencias asistidas (v0.5.0-v0.6.0).
 private fun AdminReportsScreen(
     reports: List<AdminReport>,
     classificationMetrics: com.parksmart.app.data.ClassificationMetrics?,
@@ -1069,6 +1103,7 @@ private fun AdminReportsScreen(
 }
 
 @Composable
+// Tarjeta con remitente, lugar, evidencia y controles para revisión humana y decisión del reporte.
 private fun AdminReportCard(
     report: AdminReport,
     loading: Boolean,
@@ -1139,6 +1174,7 @@ private fun AdminReportCard(
 }
 
 @Composable
+// Resume preparación, datos de validación y métricas del clasificador sin sustituir la decisión humana.
 private fun ClassificationQualitySummary(metrics: com.parksmart.app.data.ClassificationMetrics?) {
     Column(Modifier.fillMaxWidth().padding(vertical = 8.dp).clip(RoundedCornerShape(8.dp)).background(Color.White).padding(12.dp)) {
         Text("Clasificador asistido · solo apoyo", color = Ink, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
@@ -1160,9 +1196,11 @@ private fun ClassificationQualitySummary(metrics: com.parksmart.app.data.Classif
     }
 }
 
+// Formatea porcentajes opcionales; N/D indica que no hay una muestra suficiente para la métrica.
 private fun Double?.asPercent(): String = this?.let { "${(it * 100).toInt()}%" } ?: "N/D"
 
 @Composable
+// Explica datos, permisos, uso y retención vigentes en el prototipo (pantalla incorporada en v0.5.0).
 private fun PrivacyPolicyScreen(insets: PaddingValues, onBack: () -> Unit) {
     val context = LocalContext.current
     Column(Modifier.fillMaxSize().padding(insets).verticalScroll(rememberScrollState()).padding(horizontal = 20.dp)) {
@@ -1199,6 +1237,7 @@ private fun PrivacyPolicyScreen(insets: PaddingValues, onBack: () -> Unit) {
 }
 
 @Composable
+// Bloque reutilizable de título y texto dentro de la política de privacidad.
 private fun PolicySection(title: String, body: String) {
     Column(Modifier.fillMaxWidth().padding(top = 12.dp).clip(RoundedCornerShape(9.dp)).background(Color.White).padding(14.dp)) {
         Text(title, color = Ink, fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
@@ -1208,6 +1247,7 @@ private fun PolicySection(title: String, body: String) {
 }
 
 @Composable
+// Historial de reportes propios con localidad, dirección, fecha y estado.
 private fun ReportsScreen(data: DashboardData, insets: PaddingValues, onBack: () -> Unit) {
     Column(modifier = Modifier.fillMaxSize().padding(insets).verticalScroll(rememberScrollState()).padding(horizontal = 20.dp)) {
         BackHeading("Mis reportes", onBack)
@@ -1222,6 +1262,7 @@ private fun ReportsScreen(data: DashboardData, insets: PaddingValues, onBack: ()
 }
 
 @Composable
+// Presentación compacta de un reporte; compacto oculta fecha/estado para el resumen de Inicio.
 private fun ReportRow(report: ReportSummary, compact: Boolean = false) {
     val statusColor = when (report.status) {
         ReportStatus.IN_REVIEW -> Warning
@@ -1259,6 +1300,7 @@ private fun ReportRow(report: ReportSummary, compact: Boolean = false) {
 }
 
 @Composable
+// Panel de analítica del ciudadano: totales, variación temporal, localidades, tendencia y cortes (v0.6.0).
 private fun StatisticsScreen(data: DashboardData, insets: PaddingValues, onBack: () -> Unit) {
     Column(modifier = Modifier.fillMaxSize().padding(insets).verticalScroll(rememberScrollState()).padding(horizontal = 20.dp)) {
         BackHeading("Estadísticas", onBack)
@@ -1298,6 +1340,7 @@ private fun StatisticsScreen(data: DashboardData, insets: PaddingValues, onBack:
 }
 
 @Composable
+// Resume el cambio entre periodos de igual longitud sin inferir tasas de riesgo.
 private fun PeriodComparisonSummary(title: String, comparison: com.parksmart.app.data.PeriodComparison) {
     Column(
         Modifier.fillMaxWidth().clip(RoundedCornerShape(8.dp)).background(Color.White).padding(12.dp),
@@ -1311,6 +1354,7 @@ private fun PeriodComparisonSummary(title: String, comparison: com.parksmart.app
 }
 
 @Composable
+// Dibuja una serie diaria ligera con Canvas; destaca el día más reciente en verde sólido.
 private fun TrendChart(values: List<Int>) {
     val maxValue = (values.maxOrNull() ?: 0).coerceAtLeast(1)
     Canvas(Modifier.fillMaxWidth().height(132.dp)) {
@@ -1329,6 +1373,7 @@ private fun TrendChart(values: List<Int>) {
 }
 
 @Composable
+// Renglón de categoría/estado con su cantidad de reportes.
 private fun StatLine(label: String, value: Int) {
     Row(Modifier.fillMaxWidth().padding(vertical = 7.dp), verticalAlignment = Alignment.CenterVertically) {
         Text(label, modifier = Modifier.weight(1f), color = Ink, fontSize = 12.sp)
@@ -1337,6 +1382,7 @@ private fun StatLine(label: String, value: Int) {
 }
 
 @Composable
+// Indicador numérico reutilizable para totales principales de estadísticas.
 private fun MetricTile(label: String, value: String, icon: ImageVector, modifier: Modifier = Modifier) {
     Column(modifier.clip(RoundedCornerShape(14.dp)).background(Color.White).padding(15.dp)) {
         Icon(icon, contentDescription = null, tint = ParkGreen, modifier = Modifier.size(20.dp))
@@ -1347,6 +1393,7 @@ private fun MetricTile(label: String, value: String, icon: ImageVector, modifier
 }
 
 @Composable
+// Encabezado estándar para las pantallas principales.
 private fun ScreenHeading(title: String, subtitle: String) {
     Column(Modifier.fillMaxWidth().padding(top = 14.dp, bottom = 17.dp)) {
         Text(title, color = Ink, fontSize = 21.sp, fontWeight = FontWeight.Bold)
@@ -1356,6 +1403,7 @@ private fun ScreenHeading(title: String, subtitle: String) {
 }
 
 @Composable
+// Encabezado de subpantalla con acción para volver a su sección de origen.
 private fun BackHeading(title: String, onBack: () -> Unit) {
     Row(
         modifier = Modifier.fillMaxWidth().padding(top = 8.dp, bottom = 12.dp),
@@ -1370,11 +1418,13 @@ private fun BackHeading(title: String, onBack: () -> Unit) {
 }
 
 @Composable
+// Etiqueta de sección reutilizada para separar grupos del formulario.
 private fun SectionLabel(text: String) {
     Text(text, modifier = Modifier.padding(bottom = 9.dp), color = Ink, fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
 }
 
 @Composable
+// Fila informativa con icono, título y descripción de apoyo.
 private fun InfoRow(icon: ImageVector, title: String, subtitle: String) {
     Row(
         modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp)).background(Color.White).padding(13.dp),

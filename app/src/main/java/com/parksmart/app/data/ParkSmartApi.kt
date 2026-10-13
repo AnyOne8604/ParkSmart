@@ -1,5 +1,7 @@
 package com.parksmart.app.data
 
+// Contrato HTTP de Android y adaptación de respuestas JSON al dominio de la app (conexión FastAPI, v0.2.0).
+
 import android.content.Context
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
@@ -26,10 +28,12 @@ import com.parksmart.app.data.ReportStatus
 import java.io.File
 import java.io.ByteArrayInputStream
 
+// DTOs de autenticación y usuario; SerializedName adapta snake_case del backend cuando difiere de Kotlin.
 data class AuthRequest(val email: String, val password: String)
 data class RegisterRequest(val name: String, val email: String, val password: String)
 data class UserDto(val id: String, val name: String, val email: String, val role: String = "citizen")
 data class AuthResponse(@SerializedName("access_token") val accessToken: String, val user: UserDto)
+// Reporte e información del tablero personal, con localidad/dirección manual agregadas en v0.3.0.
 data class ApiReport(
     val id: String,
     val category: String,
@@ -43,6 +47,7 @@ data class ApiReport(
     @SerializedName("created_at") val createdAt: String,
 )
 data class ApiDashboard(@SerializedName("total_reports") val totalReports: Int, val reports: List<ApiReport>)
+// Respuestas de estadísticas del día, tendencias, comparaciones de periodos y categorías (v0.6.0).
 data class ApiLocalityCount(val locality: String, @SerializedName("report_count") val reportCount: Int, val level: String)
 data class ApiDailyTrend(@SerializedName("date") val date: String, @SerializedName("report_count") val reportCount: Int)
 data class ApiDimensionCount(val name: String, @SerializedName("report_count") val reportCount: Int)
@@ -63,6 +68,7 @@ data class ApiAnalytics(
     @SerializedName("comparison_7_days") val comparison7Days: ApiPeriodComparison,
     @SerializedName("comparison_30_days") val comparison30Days: ApiPeriodComparison,
 )
+// Métricas de evaluación del clasificador y de la línea base humana, incorporadas en v0.6/v0.6.1.
 data class ApiClassMetrics(
     val samples: Int,
     val precision: Double?,
@@ -87,6 +93,7 @@ data class ApiClassificationMetrics(
     @SerializedName("baseline_macro_f1") val baselineMacroF1: Double?,
     @SerializedName("per_class") val perClass: Map<String, ApiClassMetrics>,
 )
+// Respuestas espaciales: marcadores cercanos y celdas de densidad generadas por PostGIS (v0.4.0).
 data class ApiNearbyReport(
     val id: String,
     val category: String,
@@ -112,6 +119,7 @@ data class ApiZoneStatistics(
     @SerializedName("total_reports") val totalReports: Int,
     val zones: List<ApiZone>,
 )
+// Respuesta administrativa con autor, moderación y sugerencia de categoría para revisión humana (v0.5.0-v0.6.0).
 data class ApiAdminReport(
     val id: String,
     val category: String,
@@ -133,12 +141,15 @@ data class ApiAdminReport(
 data class ReportDecisionRequest(val status: String)
 data class CategoryReviewRequest(val category: String)
 
+// Declaraciones Retrofit: cada método corresponde a una ruta REST; los filtros espaciales se incorporaron en v0.4.0.
 interface ParkSmartApi {
+    // Crea cuenta y autentica; ambas rutas devuelven JWT y datos de usuario.
     @POST("api/v1/auth/register") suspend fun register(@Body body: RegisterRequest): AuthResponse
     @POST("api/v1/auth/login") suspend fun login(@Body body: AuthRequest): AuthResponse
     @GET("api/v1/dashboard") suspend fun dashboard(): ApiDashboard
     @GET("api/v1/analytics") suspend fun analytics(): ApiAnalytics
 
+    // Rutas de administración: consulta, clasificación asistida, revisión humana, moderación y foto protegida.
     @GET("api/v1/admin/reports") suspend fun allReports(): List<ApiAdminReport>
     @GET("api/v1/admin/classification/metrics") suspend fun classificationMetrics(): ApiClassificationMetrics
     @POST("api/v1/admin/reports/{reportId}/classification-suggestion")
@@ -149,6 +160,7 @@ interface ParkSmartApi {
     suspend fun decideReport(@Path("reportId") reportId: String, @Body decision: ReportDecisionRequest): ApiAdminReport
     @GET("api/v1/admin/reports/{reportId}/photo") suspend fun adminReportPhoto(@Path("reportId") reportId: String): ResponseBody
 
+    // Devuelve reportes geolocalizados cercanos respetando filtros por distancia, categoría, estado y fecha.
     @GET("api/v1/reports/nearby")
     suspend fun nearbyReports(
         @Query("latitude") latitude: Double,
@@ -159,6 +171,7 @@ interface ParkSmartApi {
         @Query("since_days") sinceDays: Int?,
     ): List<ApiNearbyReport>
 
+    // Solicita estadísticas de celdas espaciales para el mapa; los agregados los calcula PostgreSQL/PostGIS.
     @GET("api/v1/reports/zones")
     suspend fun zoneStatistics(
         @Query("category") category: String?,
@@ -166,6 +179,7 @@ interface ParkSmartApi {
         @Query("since_days") sinceDays: Int?,
     ): ApiZoneStatistics
 
+    // Subida multipart de datos y evidencia fotográfica; coordenadas pueden omitirse si se indicó dirección manual.
     @Multipart
     @POST("api/v1/reports")
     suspend fun createReport(
@@ -179,14 +193,17 @@ interface ParkSmartApi {
     ): ApiReport
 }
 
+// Implementación Android del repositorio: Retrofit, token local, peticiones y conversión a modelos de dominio.
 class ParkSmartApiRepository(context: Context) {
     private val preferences = context.getSharedPreferences("parksmart_session", Context.MODE_PRIVATE)
+    // Adjunta JWT a las llamadas autenticadas sin que cada pantalla tenga que construir la cabecera.
     private val tokenInterceptor = Interceptor { chain ->
         val request = chain.request().newBuilder().apply {
             preferences.getString("token", null)?.let { header("Authorization", "Bearer $it") }
         }.build()
         chain.proceed(request)
     }
+    // Construye el cliente HTTP con URL configurable por BuildConfig.API_BASE_URL.
     private val api: ParkSmartApi = Retrofit.Builder()
         .baseUrl(BuildConfig.API_BASE_URL)
         .client(OkHttpClient.Builder().addInterceptor(tokenInterceptor).build())
@@ -194,11 +211,13 @@ class ParkSmartApiRepository(context: Context) {
         .build()
         .create(ParkSmartApi::class.java)
 
+    // Funciones del repositorio: encapsulan operaciones de red y devuelven modelos aptos para UI.
     suspend fun signIn(email: String, password: String): ParkSmartUser = api.login(AuthRequest(email.trim(), password)).saveSession()
 
     suspend fun register(name: String, email: String, password: String): ParkSmartUser =
         api.register(RegisterRequest(name.trim(), email.trim(), password)).saveSession()
 
+    // Combina el tablero con analítica y convierte respuestas de API en resúmenes del dominio.
     suspend fun loadDashboard(): DashboardData {
         val response = api.dashboard()
         val analytics = api.analytics().toReportAnalytics()
@@ -220,6 +239,7 @@ class ParkSmartApiRepository(context: Context) {
     suspend fun decideReport(reportId: String, status: String) =
         api.decideReport(reportId, ReportDecisionRequest(status)).toAdminReport()
 
+    // Descarga evidencia administrativa y aplica EXIF antes de exponerla a la vista (corrección v0.7.0).
     suspend fun loadAdminPhoto(reportId: String): Bitmap? {
         val bytes = api.adminReportPhoto(reportId).bytes()
         val bitmap = BitmapFactory.decodeByteArray(bytes, 0, bytes.size) ?: return null
@@ -227,11 +247,13 @@ class ParkSmartApiRepository(context: Context) {
         return bitmap.withExifOrientation(orientation)
     }
 
+    // Solicita los marcadores del mapa en el radio configurado y conserva solo los campos visuales necesarios.
     suspend fun loadNearbyMapReports(latitude: Double, longitude: Double, category: String?, status: String?, sinceDays: Int?): List<MapReport> =
         api.nearbyReports(latitude, longitude, 25000, category, status, sinceDays).map {
             MapReport(it.id, it.category, it.latitude, it.longitude, it.locality, it.address, it.status, it.createdAt)
         }
 
+    // Convierte agregados PostGIS a puntos y conteos usados para pintar las zonas del mapa.
     suspend fun loadZoneStatistics(category: String?, status: String?, sinceDays: Int?): MapData {
         val stats = api.zoneStatistics(category, status, sinceDays)
         return MapData(
@@ -241,6 +263,7 @@ class ParkSmartApiRepository(context: Context) {
         )
     }
 
+    // Forma la solicitud multipart de reporte; la normalización EXIF del archivo se prepara en la UI (v0.7.0).
     suspend fun sendReport(
         category: String,
         description: String,
@@ -262,14 +285,17 @@ class ParkSmartApiRepository(context: Context) {
         )
     }
 
+    // Persiste únicamente los datos mínimos de sesión en preferencias privadas del dispositivo.
     fun signOut() { preferences.edit().remove("token").remove("name").remove("email").remove("role").apply() }
     fun restoreUser(): ParkSmartUser? = if (preferences.getString("token", null) == null) null else currentUser()
 
+    // Guarda el token y la identidad recibidos al autenticar y retorna el usuario ya adaptado.
     private fun AuthResponse.saveSession(): ParkSmartUser {
         preferences.edit().putString("token", accessToken).putString("name", user.name).putString("email", user.email).putString("role", user.role).apply()
         return currentUser()
     }
 
+    // Reconstruye el usuario desde preferencias y deriva iniciales para el avatar de navegación.
     private fun currentUser(): ParkSmartUser {
         val name = preferences.getString("name", "Usuario ParkSmart") ?: "Usuario ParkSmart"
         val email = preferences.getString("email", "") ?: ""
@@ -278,6 +304,7 @@ class ParkSmartApiRepository(context: Context) {
         return ParkSmartUser(name, email, role, initials.ifBlank { "PS" })
     }
 
+    // Adaptadores de DTO a dominio: mantienen desacopladas las pantallas del esquema JSON de FastAPI.
     private fun ApiAdminReport.toAdminReport() = com.parksmart.app.data.AdminReport(
         id = id,
         category = category,

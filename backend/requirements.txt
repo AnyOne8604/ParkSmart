@@ -1,3 +1,4 @@
+# Dependencias fijadas del servicio API; versiones exactas hacen reproducible el entorno de Docker.
 fastapi==0.135.1
 uvicorn[standard]==0.42.0
 SQLAlchemy==2.0.48

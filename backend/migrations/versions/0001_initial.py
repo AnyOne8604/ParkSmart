@@ -1,13 +1,16 @@
+# Migración inicial v0.2.0: crea usuarios/reportes y activa PostGIS con índice espacial GiST.
 from alembic import op
 import sqlalchemy as sa
 from geoalchemy2 import Geography
 
+# Identificadores forman la cadena ordenada de versiones que Alembic aplica y revierte.
 revision = "0001_initial"
 down_revision = None
 branch_labels = None
 depends_on = None
 
 
+# Construye el esquema inicial para cuentas, evidencia, coordenadas y estado del reporte.
 def upgrade() -> None:
     op.execute("CREATE EXTENSION IF NOT EXISTS postgis")
     op.create_table(
@@ -37,6 +40,7 @@ def upgrade() -> None:
     op.execute("CREATE INDEX ix_reports_location ON reports USING GIST (location)")
 
 
+# Revierte las tablas y sus índices en orden de dependencias.
 def downgrade() -> None:
     op.drop_index("ix_reports_location", table_name="reports")
     op.drop_index("ix_reports_user_id", table_name="reports")
